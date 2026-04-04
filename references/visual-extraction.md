@@ -2,6 +2,44 @@
 
 Use this reference when extracting frames, screenshots, and GIFs from a source video.
 
+## ⚠️ Step 0 — Pre-flight Check（MUST RUN FIRST）
+
+**在任何 ffmpeg 操作之前，必須執行以下檢查：**
+
+```bash
+# Step 0.1: 檢查影片檔是否存在
+if [ ! -f "/tmp/video.mp4" ]; then
+    echo "ERROR: /tmp/video.mp4 not found"
+    exit 1
+fi
+
+# Step 0.2: 用 ffprobe 驗證影片是否可讀（這是關鍵！）
+ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 /tmp/video.mp4
+if [ $? -ne 0 ]; then
+    echo "ERROR: ffprobe failed — video file is corrupt or unreadable"
+    exit 2
+fi
+
+# Step 0.3: 驗證視頻串流存在
+ffprobe -v error -select_streams v:0 -show_entries stream=codec_type,width,height -of csv=s=x:p=0 /tmp/video.mp4
+if [ $? -ne 0 ]; then
+    echo "ERROR: no video stream found"
+    exit 3
+fi
+```
+
+**失敗時的 Fallback 順序（按順序嘗試）：**
+
+| 優先順序 | 來源 | 操作 |
+|---------|------|------|
+| 1 | 來源 URL 直接下載 | `yt-dlp -f bestvideo[ext=mp4] <url> -o /tmp/video.mp4` |
+| 2 | Browser capture | 使用 canvas tool 或手動截圖 |
+| 3 | YouTube transcript page | `web_fetch` 取得章節時間戳，用章節描述代替視覺 |
+
+**⚠️ 注意**：如果 Step 0 失敗，**不要跳過截圖流程**。嘗試 Fallback 1-3，仍失敗才放棄視覺資產，並在文章中標註「本文章無視覺輔助素材」。
+
+---
+
 ## Goal
 
 Capture only visuals that add explanatory value to the article. Do not create screenshots or GIFs just because the workflow can.
@@ -175,9 +213,18 @@ Before finalizing assets, check:
 
 | 條件 | 說明 |
 |------|------|
-| 來源截圖數 < 密度表下限 | 如 talking-head < 4 張、教學簡報 < 8 張 |
-| 影片類型為 talking-head / 訪談 | 預期視覺素材稀少 |
+| **來源截圖數 < 密度表下限** | 如 talking-head < 4 張、教學簡報 < 8 張、操作示範 < 6 張 |
+| 影片類型為 talking-head / 訪談 | 預期視覺素材稀少，即便截圖達標也主動補 AI 圖提升質感 |
 | 使用者明確指定 | 「需要 AI 生圖輔助」 |
+
+### 密度計算範圍（重要）
+
+計算密度時，**必須包含以下所有来源**：
+1. 本次 Pass 2 新提取的截圖
+2. `references/anchors/` 中預存的 benchmark frames（如本 skill 已收錄的 N519Nj7LRXA 的 8 張參考圖）
+3. 任何已存在於 `outputs/images/` 的相關圖片
+
+**總計 < 密度下限時，觸發 baoyu。**
 
 ### 整合流程
 
