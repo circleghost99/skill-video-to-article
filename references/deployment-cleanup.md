@@ -17,9 +17,24 @@ In the thread or conversation, present:
 If the user gives the "OK" (e.g., "OK", "Approved", "Looks good"), proceed to sync:
 
 ### Obsidian (Default Local)
-- Use `obsidian-cli print-default --path-only` to find the vault path.
-- Copy the final markdown and confirmed assets (`frames/final/`) to the vault.
-- Ensure image links in markdown are relative to the attachment folder in the vault.
+
+**Vault 路徑**：`~/Library/Mobile Documents/iCloud~md~obsidian/Documents/知識庫/`
+
+**Output 資料夾結構**：
+```
+知識庫/
+└── 影片解析/
+    └── {YouTube_ID}_{影片標題縮寫}/
+        ├── {文章標題}.md
+        └── images/
+```
+
+**執行流程**：
+1. 複製最終 markdown 到 `影片解析/{ID}_{標題}/` 目錄
+2. 複製所有確認的截圖/GIF 到 `images/` 子目錄
+3. 將 markdown 中的圖片路徑改為相對路徑 `./images/檔名`
+4. **不要**刪除中繼檔，直到使用者在 Obsidian 確認 OK
+5. 確認後再清理 `frames/explore/` 等暫存
 
 ### Notion (External)
 - If the workflow is Notion-bound, refer to `references/notion-sync.md`.
