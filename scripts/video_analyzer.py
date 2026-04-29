@@ -112,6 +112,21 @@ def is_youtube_url(source: str) -> bool:
     return False
 
 
+def get_youtube_duration(url: str) -> Optional[float]:
+    """Get YouTube video duration using yt-dlp."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["yt-dlp", "--print", "duration", url],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return float(result.stdout.strip())
+    except Exception as e:
+        logger.warning("yt-dlp failed to get duration: %s", e)
+    return None
+
+
 def get_video_duration_ffprobe(video_path: str) -> Optional[float]:
     """Get video duration using ffprobe (for local files)."""
     import subprocess
@@ -145,6 +160,7 @@ def analyze_video(
     model: str = DEFAULT_MODEL,
     extra_prompt: str = "",
     output_path: Optional[str] = None,
+    resolution: str = "LOW",
 ) -> Dict[str, Any]:
     """
     Analyze a video using Gemini and return structured JSON.
@@ -188,11 +204,20 @@ def analyze_video(
     upload_time = 0
     processing_time = 0
     local_duration = None
+    fps = 1.0
 
     if youtube:
         logger.info("YouTube URL detected: %s", source)
+        local_duration = get_youtube_duration(source)
+        if local_duration:
+            logger.info("YouTube duration: %.0fs", local_duration)
+            if local_duration > 3600:
+                fps = 0.5
+                logger.info("Duration > 1 hour, setting fps to %.1f", fps)
+        
         video_part = types.Part(
-            file_data=types.FileData(file_uri=source)
+            file_data=types.FileData(file_uri=source),
+            video_metadata=types.VideoMetadata(fps=fps)
         )
     else:
         # Local file
@@ -214,10 +239,15 @@ def analyze_video(
         # Get duration for cost estimation
         local_duration = get_video_duration_ffprobe(str(video_path))
         if local_duration:
+            if local_duration > 3600:
+                fps = 0.5
+                logger.info("Duration > 1 hour, setting fps to %.1f", fps)
+            
+            # Note: Token estimation might be slightly off with different fps, but we keep default estimation as upper bound
             est_tokens = estimate_tokens(local_duration)
             est_cost = estimate_cost(est_tokens, 2000)  # ~2K output
             logger.info(
-                "Duration: %.0fs | Estimated tokens: %s | Estimated cost: $%.4f",
+                "Duration: %.0fs | Estimated default tokens: %s | Max cost: $%.4f",
                 local_duration, f"{est_tokens:,}", est_cost,
             )
 
@@ -265,18 +295,26 @@ def analyze_video(
             file_data=types.FileData(
                 file_uri=uploaded_file.uri,
                 mime_type=uploaded_file.mime_type,
-            )
+            ),
+            video_metadata=types.VideoMetadata(fps=fps)
         )
 
     # --- Call Gemini ---
     logger.info("Sending analysis request to %s...", model)
     t0 = time.time()
+    # Configure media resolution
+    res_level = types.MediaResolution.MEDIA_RESOLUTION_LOW if resolution.upper() == "LOW" else types.MediaResolution.MEDIA_RESOLUTION_HIGH
+    config = types.GenerateContentConfig(
+        media_resolution=res_level
+    )
+
     try:
         response = client.models.generate_content(
             model=model,
             contents=types.Content(
                 parts=[video_part, types.Part(text=full_prompt)]
             ),
+            config=config,
         )
     except Exception as e:
         err_str = str(e)
@@ -423,6 +461,7 @@ Examples:
     parser.add_argument("source", help="Video file path or YouTube URL")
     parser.add_argument("-o", "--output", help="Output JSON file path")
     parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Gemini model (default: {DEFAULT_MODEL})")
+    parser.add_argument("--resolution", default="LOW", choices=["LOW", "HIGH"], help="Media resolution for analysis (default: LOW)")
     parser.add_argument("--extra-prompt", default="", help="Additional analysis instructions")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
 
@@ -436,6 +475,7 @@ Examples:
         model=args.model,
         extra_prompt=args.extra_prompt,
         output_path=args.output,
+        resolution=args.resolution,
     )
 
     # Always print result to stdout
