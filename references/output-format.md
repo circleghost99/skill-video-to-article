@@ -189,6 +189,20 @@ quality_badge: ...
 4. 有沒有留下訂閱、寒暄、口語贅字？
 5. 如果影片很短，我有沒有硬灌水？
 
+## 10. 格式禁止項（強制）
+
+下游腳本 `notion_hamster_push.py` 會解析 Markdown 並轉換為 Notion block。
+以下格式會導致解析錯誤，**文章中嚴禁使用**：
+
+| 禁止項 | 原因 | 替代方案 |
+|--------|------|----------|
+| `---`（三短線分隔線） | 被 Notion 解析器轉成 divider block，破壞版面 | 用 `## 小節標題` 或空行分隔章節 |
+| HTML tag（`<sup>`, `<a>`, `<span>` 等） | Notion API 不支援 HTML inline | 用 Markdown 語法替代 |
+| 英文破折號 `—`（U+2014） | 與中文排版不一致 | 腳本會自動轉成「，」 |
+| 本地 `file:///` 圖片路徑 | Notion 無法存取本地檔案 | 先上傳圖床或使用 Notion 原生圖片 block |
+
+> **注意**：frontmatter 的 `---` 不受此限制，腳本會自動剝離。
+
 ---
 
 ## 圖片素材規範（強制）
@@ -212,21 +226,4 @@ quality_badge: ...
 file:///Users/circleghost/Desktop/開發/SKILL/tina/video-to-article/outputs/images/{檔名}
 ```
 
-### Discord 發布流程（重要）
-Discord **不支援** `file://` URL 也不支援本地路徑。必須用 `message` 工具的 `media` 參數上傳。
-
-
-### Discord 發布流程（重要）
-Discord **不支援** `file://` URL，也不支援本地相對路徑的 markdown 圖片語法。
-
-**正確流程：**
-1. 圖片存 `outputs/images/`（使用相對路徑 `./images/xx.jpg`，本地編輯器可正常顯示）
-2. 發 Discord 前：複製到 `~/.openclaw/media/`
-3. 文章內文 → `message(action=send, message="...")` 純文字發送
-4. 每張圖片 → `message(action=send, media="~/.openclaw/media/xx.jpg")` 上傳為 Discord 附件
-
-**錯誤示範：** 在 Discord 訊息內摻入 `![...](images/xx.jpg)` 或 `![...](file:///...)` 的 markdown 語法 → 完全不顯示
-
-**本地編輯器顯示：**
-- 相對路徑 `./images/xx.jpg` → VS Code / Typora / Obsidian 均可正常顯示
-- `file://` URL → 瀏覽器可開，但多數編輯器會阻擋
+> **發布注意**：Discord 發布流程與限制，請嚴格參照 `references/deployment-cleanup.md` 執行。
