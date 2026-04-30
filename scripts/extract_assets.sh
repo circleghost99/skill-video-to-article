@@ -92,13 +92,36 @@ for i in $(seq 0 $(( FRAME_COUNT - 1 ))); do
 
     echo "  [$((i+1))/$FRAME_COUNT] $ts — $desc"
 
-    # Extract frame
-    ffmpeg -ss "$ts" -i "$VIDEO_PATH" -vframes 1 -q:v 2 \
-        "$IMAGES_DIR/$filename" -y -loglevel warning 2>&1
+    # Smart frame extraction: probe 5 offsets around the timestamp
+    # and keep the largest JPEG (most visual info = likely a slide, not a speaker shot)
+    base_secs=$(timestamp_to_seconds "$ts")
+    best_file=""
+    best_size=0
 
-    if [ $? -eq 0 ] && [ -f "$IMAGES_DIR/$filename" ]; then
-        size=$(stat -f%z "$IMAGES_DIR/$filename" 2>/dev/null || stat -c%s "$IMAGES_DIR/$filename" 2>/dev/null || echo "0")
-        echo "    → $filename ($(( size / 1024 ))KB)"
+    for offset in -2 -1 0 1 2; do
+        probe_secs=$(( base_secs + offset ))
+        [ "$probe_secs" -lt 0 ] && continue
+
+        probe_file="$IMAGES_DIR/.probe_${i}_${offset}.jpg"
+        ffmpeg -ss "$probe_secs" -i "$VIDEO_PATH" -vframes 1 -q:v 2 -update 1 \
+            "$probe_file" -y -loglevel error 2>/dev/null
+
+        if [ -f "$probe_file" ]; then
+            probe_size=$(stat -f%z "$probe_file" 2>/dev/null || stat -c%s "$probe_file" 2>/dev/null || echo "0")
+            if [ "$probe_size" -gt "$best_size" ]; then
+                best_size=$probe_size
+                # Remove previous best if exists
+                [ -n "$best_file" ] && rm -f "$best_file"
+                best_file="$probe_file"
+            else
+                rm -f "$probe_file"
+            fi
+        fi
+    done
+
+    if [ -n "$best_file" ] && [ -f "$best_file" ]; then
+        mv "$best_file" "$IMAGES_DIR/$filename"
+        echo "    → $filename ($(( best_size / 1024 ))KB)"
 
         # Build manifest entry
         MANIFEST_ENTRIES+=("$(jq -nc \
@@ -120,6 +143,7 @@ echo ""
 echo "--- GIF Segments: $GIF_COUNT ---"
 
 for i in $(seq 0 $(( GIF_COUNT - 1 ))); do
+    [ "$GIF_COUNT" -eq 0 ] && break
     start_ts=$(jq -r ".analysis.gif_segments[$i].start_time" "$ANALYSIS_JSON")
     end_ts=$(jq -r ".analysis.gif_segments[$i].end_time" "$ANALYSIS_JSON")
     desc=$(jq -r ".analysis.gif_segments[$i].description" "$ANALYSIS_JSON")

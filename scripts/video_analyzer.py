@@ -65,7 +65,9 @@ YOUTUBE_URL_PATTERNS = [
 # Analysis prompt
 # ---------------------------------------------------------------------------
 ANALYSIS_PROMPT = """\
-你是影片視覺分析專家。請分析這部影片，找出所有值得截圖或製成 GIF 的關鍵畫面。
+你是頂級的影片視覺分析專家與簡報/教學文獻整理師。
+你的任務是「只看畫面」來分析這部影片，找出「所有」值得截圖或製成 GIF 的關鍵畫面。
+數量不限，請盡可能詳盡，寧多勿少。
 
 請以純 JSON 格式回傳，結構如下：
 
@@ -95,12 +97,34 @@ ANALYSIS_PROMPT = """\
   "content_summary": "<100字以內的影片核心內容摘要>"
 }
 
-規則：
-1. key_frames 只選「有資訊量」的畫面：UI 介面、架構圖、簡報頁、程式碼、操作結果。純說話的臉不要。
-2. gif_segments 只選「動態才有意義」的片段：操作示範、狀態切換、滾動、before/after。靜態的不要做 GIF。
-3. 每個 key_frame 和 gif_segment 都必須有 article_context，說明這個素材在文章中的用途。
-4. 按時間順序排列。
-5. 不要輸出任何 JSON 以外的文字。
+=== 嚴格規則（違反任何一條將導致任務失敗）===
+
+1. 【絕對禁止純人物畫面】
+   嚴禁擷取畫面中「只有講者、觀眾、或舞台」的幀。
+   畫面中「必須」包含可閱讀的實質資訊：簡報頁、圖表、程式碼、架構圖、UI 操作介面、高密度文字。
+   ❌ 錯誤示範：講者站在講台上說話、攝影機帶到觀眾席、全黑/全白過場畫面。
+   ✅ 正確示範：畫面主體是簡報內容（即使講者在畫面角落也OK）。
+
+2. 【只擷取「完成畫面」— 最終狀態】
+   許多簡報會透過多次點擊逐步展開內容（例如：先顯示標題，再彈出引用、再出現圖表）。
+   你「必須只擷取該頁資訊完全展開後的最終狀態」，不要擷取動畫進行中的中間態。
+   ❌ 錯誤示範：投影片上的引用框還在滑入、文字還在漸變、圖表正在展開。
+   ✅ 正確示範：所有元素已靜止、文字完整可讀、圖表已完整顯示。
+   判斷方法：如果同一張投影片在不同時間點「新增了資訊」，請選擇「最完整」的那一幀。
+
+3. 【寧多勿少 — 每張不同的簡報都要抓】
+   盡可能抓出「所有」不同的簡報分頁、架構圖切換、或每一次關鍵 UI 操作的最終結果。
+   只要畫面上的主要資訊（如投影片標題、程式碼片段、圖表內容）發生了實質性的變化，
+   就應該記錄為一個新的 key_frame。
+
+4. 【GIF 嚴格標準】
+   gif_segments 只選「動態才有意義」的片段：介面操作示範、狀態切換、程式碼滾動、before/after 比較。
+   ❌ 絕對不要做 GIF：純投影片切換、講者手勢、觀眾反應。
+   ✅ 適合做 GIF：軟體操作過程、圖表動態展開、程式碼執行結果即時更新。
+
+5. 每個 key_frame 和 gif_segment 都必須有 article_context，說明這個素材在最終文章中的具體用途。
+6. 按時間順序排列。
+7. 不要輸出任何 JSON 以外的文字。
 """
 
 
@@ -134,13 +158,50 @@ def get_video_duration_ffprobe(video_path: str) -> Optional[float]:
         result = subprocess.run(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration",
              "-of", "default=noprint_wrappers=1:nokey=1", video_path],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=15,
         )
         if result.returncode == 0 and result.stdout.strip():
             return float(result.stdout.strip())
     except Exception as e:
-        logger.warning("ffprobe failed: %s", e)
+        logger.warning("ffprobe failed to get duration: %s", e)
     return None
+
+
+def strip_audio_from_video(video_path: str) -> Optional[str]:
+    """Create a copy of the video with audio stripped using ffmpeg.
+    
+    Returns the path to the stripped video, or None on failure.
+    The caller is responsible for cleaning up the temp file.
+    """
+    import subprocess
+    import tempfile
+    
+    suffix = Path(video_path).suffix or ".mp4"
+    tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+    
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-i", video_path, "-an", "-c:v", "copy", tmp_path],
+            capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode == 0:
+            orig_size = Path(video_path).stat().st_size / (1024 * 1024)
+            new_size = Path(tmp_path).stat().st_size / (1024 * 1024)
+            logger.info(
+                "Audio stripped: %.1f MB -> %.1f MB (saved %.1f MB)",
+                orig_size, new_size, orig_size - new_size,
+            )
+            return tmp_path
+        else:
+            logger.warning("ffmpeg strip-audio failed: %s", result.stderr[:500])
+            Path(tmp_path).unlink(missing_ok=True)
+            return None
+    except Exception as e:
+        logger.warning("ffmpeg strip-audio error: %s", e)
+        Path(tmp_path).unlink(missing_ok=True)
+        return None
 
 
 def estimate_tokens(duration_seconds: float) -> int:
@@ -161,6 +222,8 @@ def analyze_video(
     extra_prompt: str = "",
     output_path: Optional[str] = None,
     resolution: str = "LOW",
+    keep_file: bool = False,
+    strip_audio: bool = False,
 ) -> Dict[str, Any]:
     """
     Analyze a video using Gemini and return structured JSON.
@@ -170,6 +233,9 @@ def analyze_video(
         model: Gemini model to use
         extra_prompt: Additional instructions to append to the prompt
         output_path: Path to write JSON output (optional)
+        resolution: Media resolution (LOW or HIGH)
+        keep_file: If True, do not delete the uploaded file from Gemini (returns file_name)
+        strip_audio: If True, remove audio track before uploading (forces visual-only analysis)
 
     Returns:
         Dict with analysis results, metadata, and token usage
@@ -206,6 +272,9 @@ def analyze_video(
     local_duration = None
     fps = 1.0
 
+    # Track temp files for cleanup
+    temp_files_to_clean = []
+
     if youtube:
         logger.info("YouTube URL detected: %s", source)
         local_duration = get_youtube_duration(source)
@@ -214,13 +283,49 @@ def analyze_video(
             if local_duration > 3600:
                 fps = 0.5
                 logger.info("Duration > 1 hour, setting fps to %.1f", fps)
-        
-        video_part = types.Part(
-            file_data=types.FileData(file_uri=source),
-            video_metadata=types.VideoMetadata(fps=fps)
-        )
-    else:
-        # Local file
+
+        if strip_audio:
+            # For YouTube + strip_audio: download first, then strip audio and upload
+            import subprocess
+            import tempfile
+            logger.info("Downloading YouTube video for audio stripping...")
+            tmp_yt = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+            tmp_yt_path = tmp_yt.name
+            tmp_yt.close()
+            try:
+                dl_result = subprocess.run(
+                    ["yt-dlp", "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]",
+                     "-o", tmp_yt_path, "--force-overwrites", source],
+                    capture_output=True, text=True, timeout=300,
+                )
+                if dl_result.returncode != 0:
+                    Path(tmp_yt_path).unlink(missing_ok=True)
+                    return _error_result(
+                        f"yt-dlp download failed: {dl_result.stderr[:300]}",
+                        stage="youtube_download",
+                    )
+            except Exception as e:
+                Path(tmp_yt_path).unlink(missing_ok=True)
+                return _error_result(f"yt-dlp download error: {e}", stage="youtube_download")
+
+            temp_files_to_clean.append(tmp_yt_path)
+            logger.info("YouTube download complete. Stripping audio...")
+            stripped = strip_audio_from_video(tmp_yt_path)
+            if stripped:
+                temp_files_to_clean.append(stripped)
+                source = stripped  # Override source to the stripped file
+            else:
+                logger.warning("Audio stripping failed, using original with audio")
+                source = tmp_yt_path
+            youtube = False  # Now treat as local file for upload
+        else:
+            # Direct YouTube URL pass-through (no strip_audio)
+            video_part = types.Part(
+                file_data=types.FileData(file_uri=source),
+                video_metadata=types.VideoMetadata(fps=fps)
+            )
+    if not youtube:
+        # Local file (or YouTube after download)
         video_path = Path(source).expanduser().resolve()
         if not video_path.exists():
             return _error_result(
@@ -233,21 +338,31 @@ def analyze_video(
                 stage="file_check",
             )
 
+        # Strip audio if requested (for local files)
+        if strip_audio and source not in [f for f in temp_files_to_clean]:
+            logger.info("Stripping audio from local file...")
+            stripped = strip_audio_from_video(str(video_path))
+            if stripped:
+                temp_files_to_clean.append(stripped)
+                video_path = Path(stripped)
+            else:
+                logger.warning("Audio stripping failed, using original with audio")
+
         file_size_mb = video_path.stat().st_size / (1024 * 1024)
         logger.info("Local file: %s (%.1f MB)", video_path, file_size_mb)
 
         # Get duration for cost estimation
-        local_duration = get_video_duration_ffprobe(str(video_path))
+        if not local_duration:
+            local_duration = get_video_duration_ffprobe(str(video_path))
         if local_duration:
             if local_duration > 3600:
                 fps = 0.5
                 logger.info("Duration > 1 hour, setting fps to %.1f", fps)
             
-            # Note: Token estimation might be slightly off with different fps, but we keep default estimation as upper bound
             est_tokens = estimate_tokens(local_duration)
             est_cost = estimate_cost(est_tokens, 2000)  # ~2K output
             logger.info(
-                "Duration: %.0fs | Estimated default tokens: %s | Max cost: $%.4f",
+                "Duration: %.0fs | Estimated tokens: %s | Max cost: $%.4f",
                 local_duration, f"{est_tokens:,}", est_cost,
             )
 
@@ -399,6 +514,10 @@ def analyze_video(
         },
     }
 
+    if file_ref:
+        result["metadata"]["gemini_file_name"] = file_ref.name
+        result["metadata"]["gemini_file_uri"] = file_ref.uri
+
     # Add duration if known
     if local_duration:
         result["metadata"]["video_duration_seconds"] = round(local_duration, 1)
@@ -411,12 +530,22 @@ def analyze_video(
         logger.info("Output written to: %s", out)
 
     # --- Cleanup uploaded file (best effort) ---
-    if file_ref:
+    if file_ref and not keep_file:
         try:
             client.files.delete(name=file_ref.name)
             logger.info("Cleaned up uploaded file: %s", file_ref.name)
         except Exception as e:
             logger.warning("Could not delete uploaded file: %s", e)
+    elif file_ref and keep_file:
+        logger.info("File kept in Gemini File API. Name: %s, URI: %s", file_ref.name, file_ref.uri)
+
+    # --- Cleanup temp files ---
+    for tmp in temp_files_to_clean:
+        try:
+            Path(tmp).unlink(missing_ok=True)
+            logger.debug("Cleaned up temp file: %s", tmp)
+        except Exception:
+            pass
 
     return result
 
@@ -463,6 +592,8 @@ Examples:
     parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Gemini model (default: {DEFAULT_MODEL})")
     parser.add_argument("--resolution", default="LOW", choices=["LOW", "HIGH"], help="Media resolution for analysis (default: LOW)")
     parser.add_argument("--extra-prompt", default="", help="Additional analysis instructions")
+    parser.add_argument("--keep-file", action="store_true", help="Keep the uploaded video file in Gemini for subsequent requests")
+    parser.add_argument("--strip-audio", action="store_true", help="Remove audio track before analysis (forces visual-only judgment)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
 
     args = parser.parse_args()
@@ -476,6 +607,8 @@ Examples:
         extra_prompt=args.extra_prompt,
         output_path=args.output,
         resolution=args.resolution,
+        keep_file=args.keep_file,
+        strip_audio=args.strip_audio,
     )
 
     # Always print result to stdout
