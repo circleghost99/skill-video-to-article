@@ -39,9 +39,12 @@ metadata:
 
 ## 執行規範（必須遵守）
 
+> ⚠️ **嚴禁自行發揮替代流程**。每一步的腳本和工具都經過驗證，自行替代會導致路徑錯誤和產出品質問題。
+
 1. **先讀後做**：執行 Step N 前，先讀對應的 reference 文件
 2. **逐步驗證**：每步完成後檢查輸出是否符合預期
-3. **不跳步驟**：必須按 01→02→...→07 順序執行
+3. **不跳步驟**：必須按 01→02→...→07 順序執行，禁止跳步
+4. **路徑規則**：`${HERMES_SKILL_DIR}` 已由 Hermes 自動展開為本 Skill 的絕對路徑。直接複製貼上指令即可，**絕對不要自行推測或硬編碼路徑**
 
 ---
 
@@ -62,6 +65,8 @@ metadata:
 ## 各步驟詳細說明
 
 ### Step 01: 環境初始化
+
+> 直接執行以下指令（`${HERMES_SKILL_DIR}` 已自動展開，不需修改）：
 
 ```bash
 bash ${HERMES_SKILL_DIR}/scripts/prepare_temp_dir.sh
@@ -121,6 +126,8 @@ python3 ${HERMES_SKILL_DIR}/scripts/video_analyzer.py "<影片來源>" \
 **動態 FPS：** ≤1 小時 → 1.0 fps ｜ >1 小時 → 0.5 fps
 
 ### Step 03: 素材擷取
+
+> 直接執行以下指令（`${HERMES_SKILL_DIR}` 已自動展開，不需修改）：
 
 ```bash
 bash ${HERMES_SKILL_DIR}/scripts/extract_assets.sh \

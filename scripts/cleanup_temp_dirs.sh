@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# zsh 沒有 pipefail，OpenClaw exec 預設 zsh，用 set -euo 即可
+set -euo
 
 BASE_DIR="${1:-${TMPDIR:-/tmp}/openclaw-video-to-article}"
 TTL_HOURS="${2:-24}"

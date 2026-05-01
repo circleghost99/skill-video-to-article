@@ -6,22 +6,27 @@ Use this reference when extracting frames, screenshots, and GIFs from a source v
 
 **在任何 ffmpeg 操作之前，必須執行以下檢查：**
 
+影片路徑應從 workflow context 取得（通常是 `$TEMP_DIR/VIDEO.mp4`），不要硬編碼。
+
 ```bash
+# 動態取得影片路徑（由 workflow 提供）
+VIDEO_PATH="${1:-$TEMP_DIR/VIDEO.mp4}"
+
 # Step 0.1: 檢查影片檔是否存在
-if [ ! -f "/tmp/video.mp4" ]; then
-    echo "ERROR: /tmp/video.mp4 not found"
+if [ ! -f "$VIDEO_PATH" ]; then
+    echo "ERROR: Video file not found at $VIDEO_PATH"
     exit 1
 fi
 
 # Step 0.2: 用 ffprobe 驗證影片是否可讀（這是關鍵！）
-ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 /tmp/video.mp4
+ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$VIDEO_PATH"
 if [ $? -ne 0 ]; then
     echo "ERROR: ffprobe failed — video file is corrupt or unreadable"
     exit 2
 fi
 
 # Step 0.3: 驗證視頻串流存在
-ffprobe -v error -select_streams v:0 -show_entries stream=codec_type,width,height -of csv=s=x:p=0 /tmp/video.mp4
+ffprobe -v error -select_streams v:0 -show_entries stream=codec_type,width,height -of csv=s=x:p=0 "$VIDEO_PATH"
 if [ $? -ne 0 ]; then
     echo "ERROR: no video stream found"
     exit 3

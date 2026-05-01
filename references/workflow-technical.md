@@ -52,17 +52,54 @@ v1 先支援：
 若只有 auto captions，不代表不能做；但要先做清理再進文章流程。
 
 ### Step 3 — 下載與保存
-把原始字幕保存為：
-- `transcript_raw.vtt`
 
-再轉成可讀文本：
-- 去掉時間碼
-- 去掉重複行
-- 合併被切碎的短句
-- 保留專有名詞原文
+**首選：`youtube-transcript-api`（繞過 yt-dlp 429 / impersonate 限制）**
+
+```python
+from youtube_transcript_api import YouTubeTranscriptApi
+api = YouTubeTranscriptApi()
+transcript_list = api.list(video_id='VIDEO_ID')
+for t in transcript_list:
+    if t.language_code == 'zh':  # 或其他目標語言
+        segs = t.fetch()
+        data = [{'start': s.start, 'duration': s.duration, 'text': s.text} for s in segs]
+```
+
+**次選：`yt-dlp`（若 youtube-transcript-api 失敗）**
+
+下載字幕時，語言代碼必須符合 YouTube 的「翻譯字幕格式」。
+
+**語言代碼格式：** `目標語言-來源語言`
+- 例如 `zh-Hans-zh` = Chinese (Simplified) from Chinese（即中文原生的 auto caption）
+- 例如 `en-zh` = English from Chinese（即中文影片被翻譯成英文的 auto caption）
+
+**標準下載命令（適用於多數中文 / 英文影片）：**
+```bash
+yt-dlp --write-subs --write-auto-subs \
+  --sub-langs zh-Hans-zh,zh-Hant-zh,en-zh,en \
+  --skip-download -o "$DEST/subs.%(ext)s" "$URL"
+```
+
+**若上述命令顯示「no subtitles for the requested languages」：**
+1. 先用 `yt-dlp --list-subs "$URL"` 查看該影片真實的字幕代碼
+2. 確認是「翻譯字幕格式」還是「原生字幕格式」
+3. 替換 `--sub-langs` 參數後重試
+
+**若遇到 429 Too Many Requests：**
+- 依 `references/fallbacks.md` 的 429 處理章節處理（先試 youtube-transcript-api，再退避重試）
+
+**保存原則：**
+字幕資料保存為 JSON：
+- `transcript_raw.json`（含時間軸）
 
 清理後保存為：
-- `transcript_clean.txt`
+- `transcript_clean.txt`（純文字，去時間碼，合併短句）
+
+**當完全無法取得字幕時：**
+若 YouTube 原生無任何字幕，且 `youtube-transcript-api` 與 `yt-dlp` 均失敗：
+1. **停止執行**：不可假造字幕或用 LLM 幻想內容。
+2. 通知使用者：「這支影片沒有可用字幕，請提供 transcript 檔案，或更換其他有字幕的影片。」
+3. 根據使用者回覆，決定是否中斷任務或手動載入外部 transcript。
 
 ## 3. 分析順序
 

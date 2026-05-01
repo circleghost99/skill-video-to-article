@@ -64,7 +64,49 @@ Fallback 是保護欄，不是主舞台。
 - 交付重點放在文章本身
 - 可附註：`本片以口語說明為主，視覺資訊有限，因此以文字解讀為主。`
 
-## 5. 標準 caveat 語句
+## 5. 429 Too Many Requests 處理（yt-dlp）
+
+當 `yt-dlp` 回應 429 或 423（rate limit / blocked）時：
+
+1. **立即切換到 `youtube-transcript-api`**（首選繞過方案，不需 impersonate）
+2. 只有當 `youtube-transcript-api` 也不可用時，才進入退避重試流程
+3. **退避重試**：等待 60-120 秒，以指數退避重試，最多 3 次
+4. 仍失敗 → 停下，回報使用者
+
+### `youtube-transcript-api` 使用方式
+
+```bash
+python3 -m pip install youtube-transcript-api --break-system-packages
+```
+
+```python
+from youtube_transcript_api import YouTubeTranscriptApi
+api = YouTubeTranscriptApi()
+transcript_list = api.list(video_id='VIDEO_ID')
+for t in transcript_list:
+    if t.language_code == 'zh':
+        segs = t.fetch()
+        data = [{'start': s.start, 'duration': s.duration, 'text': s.text} for s in segs]
+```
+
+**範例退避 script（yt-dlp fallback）：**
+```bash
+RETRY=0
+MAX_RETRIES=3
+until yt-dlp --write-subs --write-auto-subs --sub-langs ... "$URL"; do
+  RETRY=$((RETRY + 1))
+  if [ $RETRY -ge $MAX_RETRIES ]; then
+    echo "[WARN] 429 retry limit, falling back to youtube-transcript-api"
+    # 改用 python youtube-transcript-api
+    break
+  fi
+  WAIT=$((60 * RETRY))
+  echo "[WARN] Rate limited, waiting ${WAIT}s before retry $RETRY/$MAX_RETRIES"
+  sleep $WAIT
+done
+```
+
+## 6. 標準 caveat 語句
 
 ### Auto captions 清理後使用
 `註：本文主要根據 YouTube 自動字幕整理，已做語句清理，但少數術語仍可能與原片略有出入。`
@@ -74,3 +116,6 @@ Fallback 是保護欄，不是主舞台。
 
 ### 無法完成完整文章
 `這支影片目前缺少足夠可用字幕；若你要完整文章版，請改給我有字幕版本，或直接提供 transcript。`
+
+### 429 阻斷
+`影片下載被 YouTube 阻斷（429），稍後再試或手動提供影片檔案。`

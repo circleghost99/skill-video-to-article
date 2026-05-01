@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 直接用 bash 執行；開啟 pipefail，避免部分指令失敗被吞掉
 set -euo pipefail
 
 PREFIX="${1:-video-to-article}"
