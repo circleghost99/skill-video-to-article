@@ -205,7 +205,8 @@ bash ${HERMES_SKILL_DIR}/scripts/extract_assets.sh \
 3. 根據反饋修正
 4. 依使用者指示發布：
    ```bash
-   # 一條指令搞定（frontmatter 自動解析 + 本地圖片自動上傳 Cloudinary）
+   # ✅ 只需兩個參數！frontmatter 中的 tags/url/note/cover 會自動讀取
+   # ❌ 不要再手動傳 --tags --url --note --image，那些已在 frontmatter 裡
    python3 ~/.hermes/skills/openclaw-imports/circleghost-content-hamster-reporting/scripts/python/notion_hamster_push.py \
      --title "文章標題" --file article_draft.md
    ```
