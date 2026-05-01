@@ -149,8 +149,43 @@ for i in $(seq 0 $(( GIF_COUNT - 1 ))); do
 
     echo "  [$((i+1))/$GIF_COUNT] $start_ts → $end_ts ($duration s) — $desc"
 
+    # --- Smart start trim: skip black/transition frames ---
+    # Extract first frame at start_secs, check if it's too dark (JPEG < 12KB)
+    # If so, advance start by 1s (up to 3 times)
+    trim_count=0
+    actual_start=$start_secs
+    while [ "$trim_count" -lt 3 ]; do
+        probe_file=$(mktemp /tmp/gif_probe_XXXXXX.jpg)
+        ffmpeg -ss "$actual_start" -i "$VIDEO_PATH" -vframes 1 -q:v 2 -update 1 \
+            "$probe_file" -y -loglevel error 2>/dev/null
+        if [ -f "$probe_file" ]; then
+            probe_size=$(stat -f%z "$probe_file" 2>/dev/null || stat -c%s "$probe_file" 2>/dev/null || echo "0")
+            rm -f "$probe_file"
+            if [ "$probe_size" -lt 12000 ]; then
+                # Frame too dark/empty, advance 1 second
+                actual_start=$(( actual_start + 1 ))
+                duration=$(( duration - 1 ))
+                trim_count=$(( trim_count + 1 ))
+                echo "    ⏩ Skipping dark frame at ${actual_start}s (${probe_size}B), advancing..."
+            else
+                break
+            fi
+        else
+            rm -f "$probe_file"
+            break
+        fi
+    done
+    if [ "$trim_count" -gt 0 ]; then
+        echo "    ✂️  Trimmed $trim_count s of dark/transition frames (start: ${start_secs}s → ${actual_start}s)"
+    fi
+
+    if [ "$duration" -le 0 ]; then
+        echo "    ⚠️  Duration reduced to 0 after trim, skipping"
+        continue
+    fi
+
     # Extract GIF with palette for quality + end freeze (1.5s hold on last frame)
-    ffmpeg -ss "$start_ts" -t "$duration" -i "$VIDEO_PATH" \
+    ffmpeg -ss "$actual_start" -t "$duration" -i "$VIDEO_PATH" \
         -filter_complex "[0:v] fps=12,scale=720:-1:flags=lanczos,tpad=stop_mode=clone:stop_duration=1.5,split [a][b];[a] palettegen=max_colors=128 [p];[b][p] paletteuse=dither=bayer" \
         "$IMAGES_DIR/$filename" -y -loglevel warning 2>&1
 
