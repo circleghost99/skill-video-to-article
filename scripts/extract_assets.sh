@@ -149,9 +149,9 @@ for i in $(seq 0 $(( GIF_COUNT - 1 ))); do
 
     echo "  [$((i+1))/$GIF_COUNT] $start_ts → $end_ts ($duration s) — $desc"
 
-    # Extract GIF with palette for quality
+    # Extract GIF with palette for quality + end freeze (1.5s hold on last frame)
     ffmpeg -ss "$start_ts" -t "$duration" -i "$VIDEO_PATH" \
-        -filter_complex "[0:v] fps=12,scale=720:-1:flags=lanczos,split [a][b];[a] palettegen=max_colors=128 [p];[b][p] paletteuse=dither=bayer" \
+        -filter_complex "[0:v] fps=12,scale=720:-1:flags=lanczos,tpad=stop_mode=clone:stop_duration=1.5,split [a][b];[a] palettegen=max_colors=128 [p];[b][p] paletteuse=dither=bayer" \
         "$IMAGES_DIR/$filename" -y -loglevel warning 2>&1
 
     if [ $? -eq 0 ] && [ -f "$IMAGES_DIR/$filename" ]; then
