@@ -124,6 +124,17 @@ ANALYSIS_PROMPT = """\
    ❌ 絕對不要做 GIF：純投影片切換、講者手勢、觀眾反應。
    ✅ 適合做 GIF：軟體操作過程、圖表動態展開、程式碼執行結果即時更新。
 
+   【GIF vs 截圖判斷 — 過程重要 vs 結果重要】
+   問自己：「讀者需要看到動態過程，還是只需要看到最終結果？」
+   ❌ 不適合 GIF（用 key_frame 截取最終畫面即可）：
+      - 長時間打字/輸入文字（讀者不需要看人打字，只需要看打完的內容）
+      - AI 生成文件/程式碼的滾動過程（最終文件截圖更有資訊量）
+      - 頁面緩慢滾動瀏覽（用多張 key_frame 分段截取更清晰）
+   ✅ 適合 GIF（動態過程本身就是重點）：
+      - 按鈕點擊 → 介面即時反應的互動操作
+      - Before/After 狀態切換動畫
+      - 圖表/節點動態展開、連線動畫
+
    【start_time 精確規則 — 這是最常出錯的地方】
    ⚠️ start_time 必須是「動畫內容首個視覺元素出現」的時刻，不是場景切換的時刻。
    常見錯誤：把 start_time 設在投影片過渡動畫（黑屏、漸入、fade）的開始，導致 GIF 前 2-5 秒是黑畫面或講者 talking head。
@@ -136,9 +147,11 @@ ANALYSIS_PROMPT = """\
    ⚠️ end_time 必須設在動畫「完全靜止」之後（所有元素已停止移動），不能在動畫還在進行中就截止。
    寧可多留 1-2 秒，也不要讓動畫截斷。
 
-   【時長控制】
-   GIF 理想時長 5-12 秒。超過 12 秒的動畫，收窄 start_time 和 end_time 只保留最核心的動態部分。
-   原因：超長 GIF 會被腳本截斷到 15 秒，可能在動畫未完成時被強制結束。
+   【時長硬性限制 — 違反此規則的片段會被自動截斷】
+   ❌ 每個 gif_segment 的 (end_time - start_time) 絕對不可超過 12 秒。
+   如果動畫本身超過 12 秒，只擷取最精華的 8-12 秒片段，而非試圖涵蓋全部。
+   例：一段 30 秒的打字動畫 → 只取中間最密集的 10 秒。
+   違反此規則的片段會被腳本自動截斷到 12 秒，導致動畫在未完成時被強制結束。
 
 5. 【去重規則 — key_frames 與 gif_segments 不可重疊】
    同一畫面/時間段只能出現在 key_frames 或 gif_segments 其中之一，禁止兩邊都放。
@@ -518,6 +531,27 @@ def analyze_video(
             },
             token_info=token_info,
         )
+
+    # --- Post-process: enforce GIF duration cap (12s) ---
+    MAX_GIF_DURATION = 12
+    gif_segments = analysis.get("gif_segments", [])
+    for seg in gif_segments:
+        try:
+            s_parts = seg["start_time"].split(":")
+            e_parts = seg["end_time"].split(":")
+            s_secs = int(s_parts[0]) * 60 + int(s_parts[1])
+            e_secs = int(e_parts[0]) * 60 + int(e_parts[1])
+            duration = e_secs - s_secs
+            if duration > MAX_GIF_DURATION:
+                new_end = s_secs + MAX_GIF_DURATION
+                seg["end_time"] = f"{new_end // 60:02d}:{new_end % 60:02d}"
+                logger.warning(
+                    "GIF segment %s→%s was %ds, auto-trimmed to %ds (new end: %s)",
+                    seg["start_time"], f"{e_parts[0]}:{e_parts[1]}",
+                    duration, MAX_GIF_DURATION, seg["end_time"],
+                )
+        except (KeyError, ValueError, IndexError):
+            pass  # skip malformed segments
 
     # --- Build result ---
     result = {

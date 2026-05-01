@@ -137,10 +137,10 @@ for i in $(seq 0 $(( GIF_COUNT - 1 ))); do
         continue
     fi
 
-    # Cap GIF duration at 15 seconds
-    if [ "$duration" -gt 15 ]; then
-        echo "  ⚠️  GIF segment too long ($duration s), capping at 15s"
-        duration=15
+    # Cap GIF duration at 12 seconds (matches video_analyzer.py hard limit)
+    if [ "$duration" -gt 12 ]; then
+        echo "  ⚠️  GIF segment too long ($duration s), capping at 12s"
+        duration=12
     fi
 
     start_safe=$(echo "$start_ts" | sed 's/:/_/g')
