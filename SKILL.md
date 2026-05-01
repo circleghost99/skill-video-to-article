@@ -186,10 +186,13 @@ bash ${HERMES_SKILL_DIR}/scripts/extract_assets.sh \
 4. 確認術語翻譯一致性（同一專有名詞不能一下中文一下英文）
 5. 確認無英文殘留混雜（技術名詞除外）
 
-**Phase 2：配圖 — 嵌入截圖/GIF**
+**Phase 2：配圖 — 嵌入截圖/GIF（使用本地路徑）**
 1. 讀取 `manifest.json`，依時間順序將截圖/GIF 嵌入文章對應段落
 2. 按 manifest 去重結果嵌入，不重複放（同一內容只有 frame 或 GIF）
 3. 每張圖的 alt text 要有描述性（不要寫「圖片」）
+4. **圖片路徑直接用本地絕對路徑**（如 `/var/folders/.../images/frame_01.jpg`）
+   - `notion_hamster_push.py` 會自動上傳到 Cloudinary 並替換為 CDN URL
+   - ⚠️ 不需要手動上傳 Cloudinary！
 
 **Phase 3：格式品質閘門**
 1. `grep -o '<[^>]*>' article_draft.md` 確認無 HTML tag 殘留
@@ -200,8 +203,17 @@ bash ${HERMES_SKILL_DIR}/scripts/extract_assets.sh \
 1. 將校對後的 `article_draft.md` 與素材清單提交給使用者
 2. **在此停下，等待使用者回覆**
 3. 根據反饋修正
-4. 依使用者指示發布
-5. 完成後執行 `bash ${HERMES_SKILL_DIR}/scripts/cleanup_temp_dirs.sh`
+4. 依使用者指示發布：
+   ```bash
+   # 一條指令搞定（frontmatter 自動解析 + 本地圖片自動上傳 Cloudinary）
+   python3 ~/.hermes/skills/openclaw-imports/circleghost-content-hamster-reporting/scripts/python/notion_hamster_push.py \
+     --title "文章標題" --file article_draft.md
+   ```
+5. 複製到 Obsidian：`cp article_draft.md ~/Desktop/同步知識庫/30_Projects/倉鼠特報/發佈區/`
+6. 完成後執行 `bash ${HERMES_SKILL_DIR}/scripts/cleanup_temp_dirs.sh`
+
+> ⚠️ **注意**：`/var/folders/` 等 temp 路徑會被 `write_file` 工具拒絕。
+> 寫入文章時請用 `terminal` 工具（如 `cat > article_draft.md << 'EOF'`）。
 
 ---
 
