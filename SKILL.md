@@ -45,6 +45,7 @@ metadata:
 2. **逐步驗證**：每步完成後檢查輸出是否符合預期
 3. **不跳步驟**：必須按 01→02→...→07 順序執行，禁止跳步
 4. **路徑規則**：`${HERMES_SKILL_DIR}` 已由 Hermes 自動展開為本 Skill 的絕對路徑。直接複製貼上指令即可，**絕對不要自行推測或硬編碼路徑**
+5. **配圖定位**：本 Skill 的配圖 = **影片原始截圖**（透過 Gemini 分析 + ffmpeg 擷取）。Step 02 和 Step 03 是**預設必做**，不需要使用者明確要求。如果使用者額外需要 AI 生成的插圖，會另外指定使用 `baoyu-article-illustrator` 等生圖 Skill，**v2a 本身不負責 AI 生圖**
 
 ---
 
@@ -74,7 +75,9 @@ bash ${HERMES_SKILL_DIR}/scripts/prepare_temp_dir.sh
 
 建立本次 session 專屬暫存目錄，後續所有中繼檔案存於此。
 
-### Step 02: Gemini 視覺分析
+### Step 02: Gemini 視覺分析（預設必做）
+
+> ⚠️ **本步驟為預設行為，一律執行**。影片截圖是 v2a 的核心產出之一，不是可選項。
 
 使用 `video_analyzer.py` 透過 Gemini File API 分析影片，找出所有關鍵畫面。
 
@@ -134,9 +137,7 @@ bash ${HERMES_SKILL_DIR}/scripts/extract_assets.sh \
   "<影片路徑>" analysis.json [output_dir]
 ```
 
-**Smart Probe 機制：**
-- 每個時間戳在 ±2 秒範圍取 5 張候選幀
-- 自動選 JPEG 檔案最大的（= 視覺資訊最豐富 = 投影片而非暗色講者畫面）
+**直接時間戳擷取：** 使用 Gemini 回傳的精確時間戳，直接擷取該時刻的幀。Gemini 已經看過影片，不需要額外的啟發式選幀。
 
 **輸出：**
 - `images/frame_NN_MM_SS.jpg` — 關鍵截圖
@@ -158,35 +159,49 @@ bash ${HERMES_SKILL_DIR}/scripts/extract_assets.sh \
 - 抽離：問題背景 → 核心主張 → 轉化機制 → 關鍵案例 → 限制
 - 產出 `notes_theme-map.md`
 
-### Step 06: 草稿撰寫
+### Step 06: 草稿撰寫（純文字）
 
 > **執行前必讀**：`references/output-format.md`
 
+- 文章開頭**必須包含 YAML frontmatter**（§8 定義的所有必填欄位）
+- 文章本文從 H2 開始，**不要寫 H1 標題**（Notion Name 屬性已是標題）
 - 將主題地圖擴寫為 Markdown 解讀文
-- 在對應段落嵌入 `manifest.json` 中的截圖/GIF
+- ⚠️ **此步驟先不嵌入圖片**，專注在文字內容的品質和完整度
 - 遵循 Article-Grade 要求：拒絕過度壓縮
-- 產出 `article_draft.md`
+- 產出 `article_draft.md`（純文字版）
 
-### Step 07: Review + 交付（🛑 強制中斷點）
+### Step 07: Review + 配圖 + 交付（🛑 強制中斷點）
 
 > **執行前必讀**：`references/deployment-cleanup.md`
 
-**⚠️ 先自我校對，再提交使用者：**
+**⚠️ 三階段校對，依序執行：**
 
-1. **原文/字幕比對**（必做）：
-   - 重新讀取 `transcript_clean.txt` 或原始來源
-   - 逐段確認文章沒有遺漏原文重要論點、數據、案例
-   - 確認術語翻譯一致性（同一專有名詞不能一下中文一下英文）
-   - 確認無英文殘留混雜（技術名詞除外）
-2. **格式品質閘門**（必做）：
-   - `grep -o '<[^>]*>' article_draft.md` 確認無 HTML tag 殘留
-   - `grep -a $'\xe2\x80\x94' article_draft.md` 確認無 em dash 殘留
-   - 確認符合 `references/output-format.md` §10 格式禁止項
-3. 將校對後的 `article_draft.md` 與素材清單提交給使用者
-4. **在此停下，等待使用者回覆**
-5. 根據反饋修正
-6. 依使用者指示發布
-7. 完成後執行 `bash ${HERMES_SKILL_DIR}/scripts/cleanup_temp_dirs.sh`
+**Phase 1：內容校對 — 回頭 review 字幕補漏**
+1. 重新讀取 `transcript_clean.txt` 或原始來源
+2. 逐段比對文章與原文，找出遺漏的：
+   - 重要論點、數據、具體案例
+   - 關鍵的轉化邏輯（A→B→C 不能跳步）
+   - 邊界條件、使用限制
+3. 將遺漏的內容**補回文章對應段落**（不是列清單，是融入文章）
+4. 確認術語翻譯一致性（同一專有名詞不能一下中文一下英文）
+5. 確認無英文殘留混雜（技術名詞除外）
+
+**Phase 2：配圖 — 嵌入截圖/GIF**
+1. 讀取 `manifest.json`，依時間順序將截圖/GIF 嵌入文章對應段落
+2. 按 manifest 去重結果嵌入，不重複放（同一內容只有 frame 或 GIF）
+3. 每張圖的 alt text 要有描述性（不要寫「圖片」）
+
+**Phase 3：格式品質閘門**
+1. `grep -o '<[^>]*>' article_draft.md` 確認無 HTML tag 殘留
+2. `grep -a $'\xe2\x80\x94' article_draft.md` 確認無 em dash 殘留
+3. 確認符合 `references/output-format.md` §10 格式禁止項
+
+**交付：**
+1. 將校對後的 `article_draft.md` 與素材清單提交給使用者
+2. **在此停下，等待使用者回覆**
+3. 根據反饋修正
+4. 依使用者指示發布
+5. 完成後執行 `bash ${HERMES_SKILL_DIR}/scripts/cleanup_temp_dirs.sh`
 
 ---
 

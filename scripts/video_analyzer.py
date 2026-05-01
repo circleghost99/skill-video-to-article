@@ -122,9 +122,14 @@ ANALYSIS_PROMPT = """\
    ❌ 絕對不要做 GIF：純投影片切換、講者手勢、觀眾反應。
    ✅ 適合做 GIF：軟體操作過程、圖表動態展開、程式碼執行結果即時更新。
 
-5. 每個 key_frame 和 gif_segment 都必須有 article_context，說明這個素材在最終文章中的具體用途。
-6. 按時間順序排列。
-7. 不要輸出任何 JSON 以外的文字。
+5. 【去重規則 — key_frames 與 gif_segments 不可重疊】
+   同一畫面/時間段只能出現在 key_frames 或 gif_segments 其中之一，禁止兩邊都放。
+   - 靜態投影片 → 只放 key_frames
+   - 有動態展開/動畫效果 → 只放 gif_segments（不要對同一時間段再加 key_frame）
+
+6. 每個 key_frame 和 gif_segment 都必須有 article_context，說明這個素材在最終文章中的具體用途。
+7. 按時間順序排列。
+8. 不要輸出任何 JSON 以外的文字。
 """
 
 

@@ -171,14 +171,60 @@ quality_badge: ...
   - 為什麼這樣設計
   - 最終會養成什麼能力
 
-## 8. YAML Frontmatter
+## 8. YAML Frontmatter（統一 Notion 屬性）
 
-至少包含：
-- `title`
-- `source`
-- `duration`
-- `tags`
-- `quality_badge`
+文章頂部的 YAML frontmatter 同時作為：
+1. Notion 上傳的資料來源（`notion_hamster_push.py` 自動解析）
+2. Obsidian 的元資料
+3. 文章的基本資訊
+
+### 必填欄位
+
+| 欄位 | Notion 屬性 | 說明 |
+|------|------------|------|
+| `title` | Name | 文章標題（價值導向，不是影片名照貼） |
+| `source_url` | 來源網址 | 原始素材 URL（字串或陣列） |
+| `tags` | 核心洞察標籤 | YAML 陣列格式 |
+| `cover_image` | 視覺地圖 + Page Cover | 文章中最具代表性的截圖 URL |
+| `hamster_note` | 倉鼠碎碎念 | Agent 自己的個性化評語（見下方寫作指引） |
+
+### 選填欄位
+- `duration`：影片長度
+- `quality_badge`：字幕品質（🟢/🟡/🔴）
+
+### 範例
+
+```yaml
+---
+title: "從封閉迴路到千倍工程師"
+source_url: "https://www.youtube.com/watch?v=EN7frwQIbKc"
+tags: [AI, YC, 組織管理, Agent]
+cover_image: "https://res.cloudinary.com/.../frame_02.jpg"
+hamster_note: "封閉迴路的概念讓我想到我們自己的 Agent 系統——其實 Hermes 就是在做這件事。Token maxing 的邏輯也完全成立，API 帳單確實比人力成本便宜太多了。"
+duration: "10:27"
+quality_badge: "🟡 英文自動字幕"
+---
+```
+
+### 倉鼠碎碎念寫作指引
+
+這是「你」看完這篇素材後的個人心得，要有個性、有觀點。
+
+✅ 好的範例：
+- 「封閉迴路聽起來很美好，但我看過太多公司連 Slack 頻道都管不好，更別說讓 AI 讀懂整個組織了。」
+- 「Token maxing 的邏輯我完全認同——API 帳單再貴也比養一個 junior 便宜。」
+
+❌ 壞的範例：
+- 「本文介紹了 AI Native 公司的概念。」
+- 「倉鼠特報員為您整理報導。」
+
+### cover_image 選擇指引
+從文章配圖中選一張最具代表性的圖片 URL（通常是核心概念圖或標題投影片）。
+該圖片會同時作為 Notion page 的封面圖和「視覺地圖」屬性。
+
+### 重要提醒
+- frontmatter 的 `---` 不受格式禁止項限制，腳本會自動剝離
+- 文章本文不需要再寫 H1 標題（腳本會自動剝離，且 Notion 的 Name 屬性已是標題）
 
 ## 9. Review Checklist
 
@@ -206,6 +252,10 @@ quality_badge: ...
 ---
 
 ## 圖片素材規範（強制）
+
+### 配圖去重
+- `manifest.json` 中已經過 Gemini 去重，同一內容不會同時有 frame 和 GIF
+- 寫稿時直接按 manifest 嵌入即可，不要自行補加重複的截圖或 GIF
 
 ### 存放位置
 - **嚴禁**放在 `references/` 資料夾
