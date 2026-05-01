@@ -164,11 +164,22 @@ bash ${HERMES_SKILL_DIR}/scripts/extract_assets.sh \
 
 > **執行前必讀**：`references/deployment-cleanup.md`
 
-1. 將 `article_draft.md` 與素材清單提交給使用者
-2. **在此停下，等待使用者回覆**
-3. 根據反饋修正
-4. 依使用者指示發布
-5. 完成後執行 `bash ${HERMES_SKILL_DIR}/scripts/cleanup_temp_dirs.sh`
+**⚠️ 先自我校對，再提交使用者：**
+
+1. **原文/字幕比對**（必做）：
+   - 重新讀取 `transcript_clean.txt` 或原始來源
+   - 逐段確認文章沒有遺漏原文重要論點、數據、案例
+   - 確認術語翻譯一致性（同一專有名詞不能一下中文一下英文）
+   - 確認無英文殘留混雜（技術名詞除外）
+2. **格式品質閘門**（必做）：
+   - `grep -o '<[^>]*>' article_draft.md` 確認無 HTML tag 殘留
+   - `grep -a $'\xe2\x80\x94' article_draft.md` 確認無 em dash 殘留
+   - 確認符合 `references/output-format.md` §10 格式禁止項
+3. 將校對後的 `article_draft.md` 與素材清單提交給使用者
+4. **在此停下，等待使用者回覆**
+5. 根據反饋修正
+6. 依使用者指示發布
+7. 完成後執行 `bash ${HERMES_SKILL_DIR}/scripts/cleanup_temp_dirs.sh`
 
 ---
 
