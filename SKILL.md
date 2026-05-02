@@ -33,7 +33,8 @@ metadata:
 
 | 選項 | 說明 |
 |------|------|
-| ✅ 自動執行 | 觸發後按步驟順序執行，Step 06 強制停等使用者回覆 |
+| ✅ 自動執行 | 觸發後按步驟順序執行，Step 08 強制停等使用者回覆 |
+| 🧪 複用性驗證 / Dry-run | 當使用者要求「驗證 skill 複用性」「再派 agent 跑一次看看可不可以」時，先讀 `references/skill-reuse-validation.md`；只能產出文章路徑、contact sheet、Final Gate 結果；**禁止 Notion 上傳、Discord 發布正式稿、Obsidian 同步**，除非使用者在驗證後明確批准發布 |
 
 ---
 
@@ -60,7 +61,7 @@ metadata:
 | 05 | 主題地圖萃取 | 主Agent | — | 字幕 + analysis.json | `notes_theme-map.md` |
 | 06 | 草稿撰寫 | 主Agent | `references/output-format.md` | 主題地圖 + manifest | `article_draft.md`（純文字） |
 | 07 | 審校配圖 | **子代理** | `references/output-format.md` | 草稿 + 字幕 + manifest | `article_draft.md`（含圖） |
-| 08 | 預覽 + 交付 | 主Agent | `references/deployment-cleanup.md` | 完成的文章 | Notion 頁面 |
+| 08 | 預覽 + Final Gate + 交付 | 主Agent | `references/deployment-cleanup.md`, dry-run 時加讀 `references/skill-reuse-validation.md` | 完成的文章 | 預覽 / Gate output / Notion 頁面（需使用者確認後） |
 
 ---
 
@@ -155,19 +156,24 @@ bash ${HERMES_SKILL_DIR}/scripts/extract_assets.sh \
 
 素材擷取完成後，執行以下檢查流程：
 
-1. **Contact sheet 快篩**：用 `vision_analyze` 看 contact sheet，快速發現明顯問題
+1. **Contact sheet 快篩**：用 `vision_analyze` 看 contact sheet，快速發現明顯問題。可把 contact sheet 發到 Discord 讓阿魁參考，但**不需要等待阿魁審圖**才繼續，除非使用者明確要求停等。
 2. **逐張深檢**：對所有 `importance: high` 的 key_frame，**逐張** `vision_analyze` 確認：
    - 文字是否清晰可讀？（不是動態模糊/過渡動畫中間態）
    - 投影片/UI 內容是否完整展開？（不是半顯示狀態）
    - 有沒有講者遮擋主要內容？
-3. **修復流程**：發現問題幀時，用 ffmpeg 在 ±1~2 秒範圍嘗試多個時間點，再次 `vision_analyze` 選最清晰的替換
+3. **GIF 首尾幀檢查**：`vision_analyze` 不支援 `.gif` 檔案；每個 GIF 必須擷取**初始幀與最後一幀**各看一次，確認開始與結尾畫面都完整、有意義，不是 logo 過渡幀或動畫切到一半。
+4. **修復流程**：發現問題幀時，用 ffmpeg 在 ±1~2 秒範圍嘗試多個時間點，再次 `vision_analyze` 選最清晰的替換
 
 ⚠️ 「只看 contact sheet」不夠！縮圖太小看不出文字模糊，必須逐張檢查 high importance 幀。
 
-⚠️ `vision_analyze` 不支援 `.gif` 檔案。檢查 GIF 時，先用 ffmpeg 擷取首幀再分析：
+GIF 首尾幀擷取範例：
 ```bash
-ffmpeg -i images/gif_01_*.gif -vframes 1 /tmp/gif_check.jpg
-# 然後用 vision_analyze 看 /tmp/gif_check.jpg
+gif="images/gif_01_02_07-02_17.gif"
+frames=$(ffprobe -v error -count_frames -select_streams v:0 -show_entries stream=nb_read_frames -of csv=p=0 "$gif")
+last=$((frames - 1))
+ffmpeg -y -i "$gif" -vf "select='eq(n,0)'" -frames:v 1 /tmp/gif_first.jpg
+ffmpeg -y -i "$gif" -vf "select='eq(n,'"$last"')'" -frames:v 1 /tmp/gif_last.jpg
+# 然後分別用 vision_analyze 看 /tmp/gif_first.jpg 與 /tmp/gif_last.jpg
 ```
 
 ### Step 04: 字幕獲取與清理
@@ -206,7 +212,7 @@ ffmpeg -i images/gif_01_*.gif -vframes 1 /tmp/gif_check.jpg
 ```
 delegate_task(
   goal="審校並配圖 video-to-article 文章草稿",
-  context="工作目錄: {temp_dir}\n\n要讀取的檔案:\n- {temp_dir}/article_draft.md（純文字草稿）\n- {temp_dir}/transcript_clean.txt（原始字幕）\n- {temp_dir}/manifest.json（圖片索引，每張圖有 article_context 描述對應段落）\n\n寫作規範（先載入再開始工作）:\n1. skill_view(name='video-to-article', file_path='references/output-format.md') — 格式規範\n2. skill_view(name='hamster-content-analysis') — 倉鼠寫作方法論（Opening Hook、論證框架等）\n\n任務（依序執行）:\n\n【Phase 1 - 內容校對 + 寫作優化】\n1. 讀取 transcript_clean.txt，逐段比對 article_draft.md\n2. 補漏遺漏的：重要論點、數據、具體案例、轉化邏輯\n3. 將遺漏內容融入文章對應段落（不是列清單）\n4. 按 hamster-content-analysis 的寫作方法論優化文章結構和表達\n5. 確認術語翻譯一致性\n\n【Phase 2 - 配圖】\n1. 讀取 manifest.json，根據每張圖的 article_context 插入到文章中對應段落之後\n2. Markdown 圖片格式必須是 ![描述文字](圖片路徑)\n   ✅ 正確：![封閉迴路系統架構圖]({temp_dir}/images/frame_03.jpg)\n   ❌ 錯誤：![{temp_dir}/images/frame_03.jpg]()（路徑放在 alt text 裡是錯的！）\n3. 圖片用本地絕對路徑（如 {temp_dir}/images/frame_01.jpg）\n4. ❌ 禁止把圖片堆在文章最後面（append）——每張圖必須出現在它描述的內容附近\n5. ❌ 禁止連續兩張圖——「連續」的定義是兩張圖之間只有空白行，沒有實質文字。如果兩張圖之間沒有至少一段有意義的中文文字（不算空行），必須合併成一張或在中間加轉場說明\n6. 每篇文章至少 3 張配圖\n7. 每張圖的 alt text 要有描述性（不要寫「圖片」）\n8. 講者個人介紹截圖（純臉部特寫、無投影片文字的）不需要插入文章\n\n【Phase 3 - 格式檢查 + 自我驗證】\n1. 用 terminal 執行 grep -o '<[^>]*>' article_draft.md 確認無 HTML tag\n2. em dash 和雙逗號不需要處理（推送腳本自動清理）\n3. ⚠️ 必須執行以下自我驗證指令確認沒有連續圖片：\n   python3 -c \"\nwith open('{temp_dir}/article_draft.md') as f:\n    lines = f.readlines()\nimgs = [i for i,l in enumerate(lines) if l.strip().startswith('![')]\nfor j in range(len(imgs)-1):\n    between = lines[imgs[j]+1:imgs[j+1]]\n    if not any(l.strip() and not l.strip().startswith('![') for l in between):\n        print(f'ERROR: 連續圖片 L{imgs[j]+1} & L{imgs[j+1]+1}')\nassert all(any(l.strip() and not l.strip().startswith('![') for l in lines[imgs[j]+1:imgs[j+1]]) for j in range(len(imgs)-1)), '有連續圖片！'\nprint('OK: 無連續圖片')\n\"\n   如果驗證失敗，必須修正後重新驗證\n\n完成後用 terminal 工具寫回 {temp_dir}/article_draft.md",
+  context="工作目錄: {temp_dir}\n\n要讀取的檔案:\n- {temp_dir}/article_draft.md（純文字草稿）\n- {temp_dir}/transcript_clean.txt（原始字幕）\n- {temp_dir}/manifest.json（圖片索引，每張圖有 article_context 描述對應段落）\n\n寫作規範（先載入再開始工作）:\n1. skill_view(name='video-to-article', file_path='references/output-format.md') — 格式規範\n2. skill_view(name='hamster-content-analysis') — 倉鼠寫作方法論（Opening Hook、論證框架等）\n\n任務（依序執行）:\n\n【Phase 1 - 內容校對 + 寫作優化】\n1. 讀取 transcript_clean.txt，逐段比對 article_draft.md\n2. 補漏遺漏的：重要論點、數據、具體案例、轉化邏輯\n3. 將遺漏內容融入文章對應段落（不是列清單）\n4. 按 hamster-content-analysis 的寫作方法論優化文章結構和表達\n5. 確認術語翻譯一致性\n\n【Phase 2 - 配圖】\n1. 讀取 manifest.json，根據每張圖的 article_context 插入到文章中對應段落之後\n2. Markdown 圖片格式必須是 ![描述文字](圖片路徑)\n   ✅ 正確：![封閉迴路系統架構圖]({temp_dir}/images/frame_03.jpg)\n   ❌ 錯誤：![{temp_dir}/images/frame_03.jpg]()（路徑放在 alt text 裡是錯的！）\n3. 圖片用本地絕對路徑（如 {temp_dir}/images/frame_01.jpg）\n4. ❌ 禁止把圖片堆在文章最後面（append）——每張圖必須出現在它描述的內容附近\n5. ❌ 禁止連續兩張圖——「連續」的定義是兩張圖之間只有空白行，沒有實質文字。如果兩張圖之間沒有至少一段有意義的中文文字（不算空行），必須合併成一張或在中間加轉場說明\n6. 每篇文章至少 3 張配圖\n7. 每張圖的 alt text 要有描述性（不要寫「圖片」）\n8. 講者個人介紹截圖（純臉部特寫、無投影片文字的）不需要插入文章\n\n【Phase 3 - 格式檢查 + 自我驗證】\n1. 用 terminal 執行 grep -o '<[^>]*>' article_draft.md 確認無 HTML tag\n2. em dash、U+2015、雙逗號與簡轉繁由 Step 08 主 Agent Final Gate 統一處理；子代理不要自行用 sed/awk 亂改，但若有改文或補圖，仍必須重新跑連續圖片檢查\n3. ⚠️ 必須執行以下自我驗證指令確認沒有連續圖片：\n   python3 -c \"\nwith open('{temp_dir}/article_draft.md') as f:\n    lines = f.readlines()\nimgs = [i for i,l in enumerate(lines) if l.strip().startswith('![')]\nfor j in range(len(imgs)-1):\n    between = lines[imgs[j]+1:imgs[j+1]]\n    if not any(l.strip() and not l.strip().startswith('![') for l in between):\n        print(f'ERROR: 連續圖片 L{imgs[j]+1} & L{imgs[j+1]+1}')\nassert all(any(l.strip() and not l.strip().startswith('![') for l in lines[imgs[j]+1:imgs[j+1]]) for j in range(len(imgs)-1)), '有連續圖片！'\nprint('OK: 無連續圖片')\n\"\n   如果驗證失敗，必須修正後重新驗證\n\n完成後用 terminal 工具寫回 {temp_dir}/article_draft.md",
   toolsets=["terminal", "file", "skills", "vision"]
 )
 ```
@@ -216,6 +222,11 @@ delegate_task(
 ### Step 08: 預覽 + 交付（🛑 強制中斷點）
 
 > **執行前必讀**：`references/deployment-cleanup.md`
+> 若本次是複用性驗證 / Dry-run，還必須先讀 `references/skill-reuse-validation.md`，並以該文件的 Final response contract 回報。
+
+**模式分流：**
+- 正式交付：先預覽 → 等待使用者確認 → 根據反饋修正 → 最後一次修改後跑 Final Gate → 使用者明確批准後才發布。
+- Dry-run / 複用性驗證：不發布、不等發布批准；可以產出 contact sheet 與本地文章路徑，但必須在 final response 前跑 Final Gate，並附完整 Gate output。
 
 **預覽：**
 1. 讀取子代理完成的 `article_draft.md`
@@ -226,7 +237,16 @@ delegate_task(
 1. 將校對後的 `article_draft.md` 與素材清單提交給使用者
 2. **在此停下，等待使用者回覆**
 3. 根據反饋修正
-4. 依使用者指示發布：
+4. **發布前 Final Gate（主 Agent 必跑，即使 Step 07 子代理已跑過）**：
+   - 若主 Agent 在 Step 07 之後有任何手動插圖、替換圖片 URL、增刪段落，必須在最後一次修改後重新執行 Final Gate。
+   - Final Gate 會先做 deterministic normalization：`zhtw` 台灣用語轉換 → OpenCC `s2tw` 補漏字 → U+2014/U+2015 轉全形逗號 → 壓掉 `，，`。
+   - Final Gate 會阻擋：本文 `---` divider、連續圖片、HTML tag、dash residue、中英黏連。完整英文句可能是引用或專有語句，不作為阻擋項；由人工審稿判斷是否需要翻譯。
+   - 必跑以下指令；如果輸出不是 `OK: final article gate passed`，禁止發布：
+     ```bash
+     python3 ${HERMES_SKILL_DIR}/scripts/final_gate.py /absolute/path/to/article_draft.md
+     ```
+   - 只想檢查、不想寫回 normalization 時可加 `--check-only`，但正式發布前必須跑不帶 `--check-only` 的版本。
+5. 依使用者指示發布：
    ```bash
    # ✅ 只需兩個參數！frontmatter 中的 tags/url/note/cover 會自動讀取
    # ❌ 不要再手動傳 --tags --url --note --image，那些已在 frontmatter 裡
@@ -243,8 +263,8 @@ delegate_task(
      --title "文章標題" --file article_draft.md --update <PAGE_ID>
    ```
 
-5. 複製到 Obsidian：`cp article_draft.md ~/Desktop/同步知識庫/30_Projects/倉鼠特報/發佈區/`
-6. 完成後執行 `bash ${HERMES_SKILL_DIR}/scripts/cleanup_temp_dirs.sh`
+6. 複製到 Obsidian：`cp article_draft.md ~/Desktop/同步知識庫/30_Projects/倉鼠特報/發佈區/`
+7. 完成後執行 `bash ${HERMES_SKILL_DIR}/scripts/cleanup_temp_dirs.sh`
 
 > ⚠️ **注意**：`/var/folders/` 等 temp 路徑會被 `write_file` 工具拒絕。
 > 寫入文章時請用 `terminal` 工具（如 `cat > article_draft.md << 'EOF'`）。
