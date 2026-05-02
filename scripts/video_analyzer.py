@@ -94,7 +94,11 @@ ANALYSIS_PROMPT = """\
       "article_context": "<這段 GIF 在文章中可以用來說明什麼>"
     }
   ],
-  "content_summary": "<100字以內的影片核心內容摘要>"
+  "content_summary": "<100字以內的影片核心內容摘要>",
+  "cover_frame": {
+    "timestamp": "MM:SS",
+    "reason": "<為什麼這張最適合當封面（一句話）>"
+  }
 }
 
 === 嚴格規則（違反任何一條將導致任務失敗）===
@@ -166,6 +170,14 @@ ANALYSIS_PROMPT = """\
 6. 每個 key_frame 和 gif_segment 都必須有 article_context，說明這個素材在最終文章中的具體用途。
 7. 按時間順序排列。
 8. 不要輸出任何 JSON 以外的文字。
+
+9. 【封面圖選擇】
+   cover_frame 必須從 key_frames 中挑選「最適合當文章封面」的一張。
+   選擇標準（優先順序）：
+   - 有清晰的大標題或核心概念圖（如「The Sprint Process」）
+   - 資訊密度高但不雜亂（如架構圖、流程圖）
+   - 視覺衝擊力強（色彩豐富、排版搶眼）
+   ❌ 不適合當封面：純文字、純講者、深色 terminal 畫面、密密麻麻的程式碼。
 """
 
 

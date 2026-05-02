@@ -141,8 +141,12 @@ bash ${HERMES_SKILL_DIR}/scripts/extract_assets.sh \
 
 **輸出：**
 - `images/frame_NN_MM_SS.jpg` — 關鍵截圖
-- `images/gif_NN_MM_SS-MM_SS.gif` — 動態片段（≤15 秒）
+- `images/gif_NN_MM_SS-MM_SS.gif` — 動態片段（≤12 秒）
 - `manifest.json` — 整合索引
+
+**封面圖：** `analysis.json` 包含 `cover_frame` 欄位（時間戳＋原因），用於後續 Notion 發布時的封面圖選擇。
+
+**品質檢查（必做）：** 素材擷取完成後，用 `vision_analyze` 看一眼 contact sheet 或關鍵幀，確認沒有模糊/過渡幀。若發現問題幀，用 ffmpeg 嘗試 ±1~2 秒重新擷取。
 
 ### Step 04: 字幕獲取與清理
 
