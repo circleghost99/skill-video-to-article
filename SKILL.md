@@ -146,7 +146,18 @@ bash ${HERMES_SKILL_DIR}/scripts/extract_assets.sh \
 
 **封面圖：** `analysis.json` 包含 `cover_frame` 欄位（時間戳＋原因），用於後續 Notion 發布時的封面圖選擇。
 
-**品質檢查（必做）：** 素材擷取完成後，用 `vision_analyze` 看一眼 contact sheet 或關鍵幀，確認沒有模糊/過渡幀。若發現問題幀，用 ffmpeg 嘗試 ±1~2 秒重新擷取。
+**品質檢查（必做，不可跳過）：**
+
+素材擷取完成後，執行以下檢查流程：
+
+1. **Contact sheet 快篩**：用 `vision_analyze` 看 contact sheet，快速發現明顯問題
+2. **逐張深檢**：對所有 `importance: high` 的 key_frame，**逐張** `vision_analyze` 確認：
+   - 文字是否清晰可讀？（不是動態模糊/過渡動畫中間態）
+   - 投影片/UI 內容是否完整展開？（不是半顯示狀態）
+   - 有沒有講者遮擋主要內容？
+3. **修復流程**：發現問題幀時，用 ffmpeg 在 ±1~2 秒範圍嘗試多個時間點，再次 `vision_analyze` 選最清晰的替換
+
+⚠️ 「只看 contact sheet」不夠！縮圖太小看不出文字模糊，必須逐張檢查 high importance 幀。
 
 ### Step 04: 字幕獲取與清理
 
@@ -214,6 +225,15 @@ bash ${HERMES_SKILL_DIR}/scripts/extract_assets.sh \
    python3 ~/.hermes/skills/openclaw-imports/circleghost-content-hamster-reporting/scripts/python/notion_hamster_push.py \
      --title "文章標題" --file article_draft.md
    ```
+   推送成功後會自動生成 `notion_manifest.json`（image→block_id 映射）。
+
+   **修復圖片/更新文章**：如果發現模糊圖片或需要修改文章，**不要手寫 Notion API**！用 `--update` 模式重新推送整篇文章：
+   ```bash
+   python3 ~/.hermes/skills/openclaw-imports/circleghost-content-hamster-reporting/scripts/python/notion_hamster_push.py \
+     --title "文章標題" --file article_draft.md --update <PAGE_ID>
+   ```
+   這會清除舊 blocks → 重新上傳，自動處理 Cloudinary 和圖片替換。
+
 5. 複製到 Obsidian：`cp article_draft.md ~/Desktop/同步知識庫/30_Projects/倉鼠特報/發佈區/`
 6. 完成後執行 `bash ${HERMES_SKILL_DIR}/scripts/cleanup_temp_dirs.sh`
 
