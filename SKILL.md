@@ -49,7 +49,7 @@ metadata:
 
 ---
 
-## 工作流（7 步）
+## 工作流（8 步）
 
 | Step | 職責 | 執行者 | 參考文件 | 輸入 | 輸出 |
 |------|------|--------|---------|------|------|
@@ -58,8 +58,9 @@ metadata:
 | 03 | 素材擷取 | 腳本 | — | analysis.json + 影片 | `images/` + `manifest.json` |
 | 04 | 字幕獲取清理 | 主Agent | `references/workflow-technical.md`, `references/fallbacks.md` | 影片 URL | `transcript_clean.txt` |
 | 05 | 主題地圖萃取 | 主Agent | — | 字幕 + analysis.json | `notes_theme-map.md` |
-| 06 | 草稿撰寫 | 主Agent | `references/output-format.md` | 主題地圖 + manifest | `article_draft.md` |
-| 07 | Review + 交付 | 主Agent | `references/deployment-cleanup.md` | 草稿 + 素材 | 最終文章 |
+| 06 | 草稿撰寫 | 主Agent | `references/output-format.md` | 主題地圖 + manifest | `article_draft.md`（純文字） |
+| 07 | 審校配圖 | **子代理** | `references/output-format.md` | 草稿 + 字幕 + manifest | `article_draft.md`（含圖） |
+| 08 | 預覽 + 交付 | 主Agent | `references/deployment-cleanup.md` | 完成的文章 | Notion 頁面 |
 
 ---
 
@@ -195,41 +196,31 @@ ffmpeg -i images/gif_01_*.gif -vframes 1 /tmp/gif_check.jpg
 - 遵循 Article-Grade 要求：拒絕過度壓縮
 - 產出 `article_draft.md`（純文字版）
 
-### Step 07: Review + 配圖 + 交付（🛑 強制中斷點）
+### Step 07: 審校配圖（delegate_task 子代理）
+
+> ⚠️ **本步驟使用 `delegate_task` 派子代理執行**，不要自己做。
+> 子代理有乾淨的 context，不會受到前面步驟的資訊干擾。
+
+用以下模板呼叫 `delegate_task`（將 `{temp_dir}` 替換為實際工作目錄）：
+
+```
+delegate_task(
+  goal="審校並配圖 video-to-article 文章草稿",
+  context="工作目錄: {temp_dir}\n\n要讀取的檔案:\n- {temp_dir}/article_draft.md（純文字草稿）\n- {temp_dir}/transcript_clean.txt（原始字幕）\n- {temp_dir}/manifest.json（圖片索引，每張圖有 article_context 描述對應段落）\n\n寫作規範: 用 skill_view(name='video-to-article', file_path='references/output-format.md') 載入\n\n任務（依序執行）:\n\n【Phase 1 - 內容校對】\n1. 讀取 transcript_clean.txt，逐段比對 article_draft.md\n2. 補漏遺漏的：重要論點、數據、具體案例、轉化邏輯\n3. 將遺漏內容融入文章對應段落（不是列清單）\n4. 確認術語翻譯一致性\n\n【Phase 2 - 配圖】\n1. 讀取 manifest.json，根據每張圖的 article_context 插入到文章中對應段落之後\n2. 圖片用本地絕對路徑（如 {temp_dir}/images/frame_01.jpg）\n3. ❌ 禁止把圖片堆在文章最後面（append）——每張圖必須出現在它描述的內容附近\n4. ❌ 禁止連續兩張圖（中間必須有文字說明）\n5. 每篇文章至少 3 張配圖\n6. 每張圖的 alt text 要有描述性（不要寫「圖片」）\n\n【Phase 3 - 格式檢查】\n1. 用 terminal 執行 grep -o '<[^>]*>' article_draft.md 確認無 HTML tag\n2. em dash 和雙逗號不需要處理（推送腳本自動清理）\n\n完成後用 terminal 工具寫回 {temp_dir}/article_draft.md",
+  toolsets=["terminal", "file", "skills", "vision"]
+)
+```
+
+**子代理完成後**，主 Agent 讀取 `article_draft.md` 確認圖片已正確嵌入，然後進入 Step 08。
+
+### Step 08: 預覽 + 交付（🛑 強制中斷點）
 
 > **執行前必讀**：`references/deployment-cleanup.md`
 
-**⚠️ 三階段校對，依序執行：**
-
-**Phase 1：內容校對 — 回頭 review 字幕補漏**
-1. 重新讀取 `transcript_clean.txt` 或原始來源
-2. 逐段比對文章與原文，找出遺漏的：
-   - 重要論點、數據、具體案例
-   - 關鍵的轉化邏輯（A→B→C 不能跳步）
-   - 邊界條件、使用限制
-3. 將遺漏的內容**補回文章對應段落**（不是列清單，是融入文章）
-4. 確認術語翻譯一致性（同一專有名詞不能一下中文一下英文）
-5. 確認無英文殘留混雜（技術名詞除外）
-
-**Phase 2：配圖 — 嵌入截圖/GIF（使用本地路徑）⚠️ 不可跳過**
-
-❌ **絕對不可以提交一篇沒有圖片的文章。** 每篇文章至少要有 3 張配圖。
-
-1. 讀取 `manifest.json`，**根據每張圖的 `article_context` 欄位**，將圖片插入到文章中**對應討論該主題的段落之後**
-2. ❌ **禁止把圖片全部堆在文章最後面（append）**。每張圖必須出現在它描述的內容附近
-3. 按 manifest 去重結果嵌入，不重複放（同一內容只有 frame 或 GIF）
-4. 每張圖的 alt text 要有描述性（不要寫「圖片」）
-5. **圖片路徑直接用本地絕對路徑**（如 `/var/folders/.../images/frame_01.jpg`）
-   - `notion_hamster_push.py` 會自動上傳到 Cloudinary 並替換為 CDN URL
-   - ⚠️ 不需要手動上傳 Cloudinary！不需要手動替換路徑！腳本一步完成！
-6. ❌ **禁止連續圖片**：兩張圖/GIF 之間必須有至少一段文字說明，不可紧接插入
-   - 如果兩張圖屬於同一段落，只保留最有代表性的一張
-   - 如果兩張圖都必要，在中間插入轉場文字解說它們的差異
-
-**Phase 3：格式品質閘門**
-1. `grep -o '<[^>]*>' article_draft.md` 確認無 HTML tag 殘留
-2. em dash（`—`）和雙逗號（`，，`）**不需要手動處理** — `notion_hamster_push.py` 會自動清理
-3. 確認符合 `references/output-format.md` §10 格式禁止項
+**預覽：**
+1. 讀取子代理完成的 `article_draft.md`
+2. 用 Discord embed 分段預覽文章內容（每段一張卡片）
+3. 用 Discord embed 預覽每張配圖（含 alt text）
 
 **交付：**
 1. 將校對後的 `article_draft.md` 與素材清單提交給使用者
@@ -237,20 +228,20 @@ ffmpeg -i images/gif_01_*.gif -vframes 1 /tmp/gif_check.jpg
 3. 根據反饋修正
 4. 依使用者指示發布：
    ```bash
-    # ✅ 只需兩個參數！frontmatter 中的 tags/url/note/cover 會自動讀取
-    # ❌ 不要再手動傳 --tags --url --note --image，那些已在 frontmatter 裡
-    # ⭐ cover_image：YouTube 影片直接用 analysis.json 裡的 youtube_thumbnail_url
-    python3 ~/.hermes/skills/openclaw-imports/circleghost-content-hamster-reporting/scripts/python/notion_hamster_push.py \
-      --title "文章標題" --file article_draft.md
+   # ✅ 只需兩個參數！frontmatter 中的 tags/url/note/cover 會自動讀取
+   # ❌ 不要再手動傳 --tags --url --note --image，那些已在 frontmatter 裡
+   # ⭐ cover_image：YouTube 影片直接用 analysis.json 裡的 youtube_thumbnail_url
+   # ⚠️ 圖片路徑保持本地路徑！腳本自動上傳 Cloudinary 並替換
+   python3 ~/.hermes/skills/openclaw-imports/circleghost-content-hamster-reporting/scripts/python/notion_hamster_push.py \
+     --title "文章標題" --file article_draft.md
    ```
    推送成功後會自動生成 `notion_manifest.json`（image→block_id 映射）。
 
-   **修復圖片/更新文章**：如果發現模糊圖片或需要修改文章，**不要手寫 Notion API**！用 `--update` 模式重新推送整篇文章：
+   **修復圖片/更新文章**：用 `--update` 模式重新推送整篇文章：
    ```bash
    python3 ~/.hermes/skills/openclaw-imports/circleghost-content-hamster-reporting/scripts/python/notion_hamster_push.py \
      --title "文章標題" --file article_draft.md --update <PAGE_ID>
    ```
-   這會清除舊 blocks → 重新上傳，自動處理 Cloudinary 和圖片替換。
 
 5. 複製到 Obsidian：`cp article_draft.md ~/Desktop/同步知識庫/30_Projects/倉鼠特報/發佈區/`
 6. 完成後執行 `bash ${HERMES_SKILL_DIR}/scripts/cleanup_temp_dirs.sh`
