@@ -258,22 +258,17 @@ quality_badge: "🟡 英文自動字幕"
 - 寫稿時直接按 manifest 嵌入即可，不要自行補加重複的截圖或 GIF
 
 ### 存放位置
-- **嚴禁**放在 `references/` 資料夾
-- **必須**放在 `outputs/images/`（與文章輸出在同一目錄）
-- 理由：`references/` 是技能邏輯資料，`outputs/images/` 是文章附屬素材
+- 截圖/GIF 由 `extract_assets.sh` 產出在工作目錄的 `images/` 子目錄
+- **不要**把圖片放在 Skill 目錄內
 
 ### 路徑格式
-- **必須**使用絕對路徑：`file:///Users/circleghost/Desktop/開發/SKILL/tina/video-to-article/outputs/images/圖片名.jpg`
-- **禁止**使用相對路徑（如 `../images/xx.jpg` 或 `references/anchors/xx.jpg`）
-- 理由：相對路徑在文章被複製、轉發、或發送到 Discord 時會斷裂
+- 文章中使用**本地絕對路徑**（如 `/var/folders/.../images/frame_01.jpg`）
+- `notion_hamster_push.py` 會自動偵測本地路徑 → 上傳 Cloudinary → 替換為 CDN URL
+- **不需要手動上傳 Cloudinary**
 
 ### 命名規則
-- 格式：`outputs/images/{影片ID}_{時間戳}_{描述}.{副檔名}`
-- 範例：`N519Nj7LRXA_151s_skill-pack.jpg`
-
-### 絕對路徑模板
-```
-file:///Users/circleghost/Desktop/開發/SKILL/tina/video-to-article/outputs/images/{檔名}
-```
+- 格式：`frame_NN_MM_SS.jpg`（截圖）、`gif_NN_MM_SS-MM_SS.gif`（GIF）
+- 由 `extract_assets.sh` 自動命名
 
 > **發布注意**：Discord 發布流程與限制，請嚴格參照 `references/deployment-cleanup.md` 執行。
+
