@@ -215,13 +215,14 @@ ffmpeg -i images/gif_01_*.gif -vframes 1 /tmp/gif_check.jpg
 
 ❌ **絕對不可以提交一篇沒有圖片的文章。** 每篇文章至少要有 3 張配圖。
 
-1. 讀取 `manifest.json`，依時間順序將截圖/GIF 嵌入文章對應段落
-2. 按 manifest 去重結果嵌入，不重複放（同一內容只有 frame 或 GIF）
-3. 每張圖的 alt text 要有描述性（不要寫「圖片」）
-4. **圖片路徑直接用本地絕對路徑**（如 `/var/folders/.../images/frame_01.jpg`）
+1. 讀取 `manifest.json`，**根據每張圖的 `article_context` 欄位**，將圖片插入到文章中**對應討論該主題的段落之後**
+2. ❌ **禁止把圖片全部堆在文章最後面（append）**。每張圖必須出現在它描述的內容附近
+3. 按 manifest 去重結果嵌入，不重複放（同一內容只有 frame 或 GIF）
+4. 每張圖的 alt text 要有描述性（不要寫「圖片」）
+5. **圖片路徑直接用本地絕對路徑**（如 `/var/folders/.../images/frame_01.jpg`）
    - `notion_hamster_push.py` 會自動上傳到 Cloudinary 並替換為 CDN URL
-   - ⚠️ 不需要手動上傳 Cloudinary！
-5. ❌ **禁止連續圖片**：兩張圖/GIF 之間必須有至少一段文字說明，不可紧接插入
+   - ⚠️ 不需要手動上傳 Cloudinary！不需要手動替換路徑！腳本一步完成！
+6. ❌ **禁止連續圖片**：兩張圖/GIF 之間必須有至少一段文字說明，不可紧接插入
    - 如果兩張圖屬於同一段落，只保留最有代表性的一張
    - 如果兩張圖都必要，在中間插入轉場文字解說它們的差異
 
