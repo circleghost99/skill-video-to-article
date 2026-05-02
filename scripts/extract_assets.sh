@@ -99,6 +99,40 @@ for i in $(seq 0 $(( FRAME_COUNT - 1 ))); do
 
     if [ -f "$IMAGES_DIR/$filename" ]; then
         frame_size=$(stat -f%z "$IMAGES_DIR/$filename" 2>/dev/null || stat -c%s "$IMAGES_DIR/$filename" 2>/dev/null || echo "0")
+
+        # --- Blur probe: if frame is too small, it might be a transition/blur frame ---
+        # Try offsets ±2s and ±4s, pick the largest JPEG (sharpest frame)
+        best_size=$frame_size
+        best_offset=0
+        for offset in 2 -2 4 -4; do
+            probe_secs=$(( base_secs + offset ))
+            [ "$probe_secs" -lt 0 ] && continue
+            probe_file="$IMAGES_DIR/.probe_${i}.jpg"
+            ffmpeg -ss "$probe_secs" -i "$VIDEO_PATH" -vframes 1 -q:v 2 -update 1 \
+                "$probe_file" -y -loglevel error 2>/dev/null
+            if [ -f "$probe_file" ]; then
+                probe_size=$(stat -f%z "$probe_file" 2>/dev/null || stat -c%s "$probe_file" 2>/dev/null || echo "0")
+                if [ "$probe_size" -gt "$best_size" ]; then
+                    # Check if the size difference is significant (>20% larger = likely clearer)
+                    threshold=$(( best_size * 120 / 100 ))
+                    if [ "$probe_size" -gt "$threshold" ]; then
+                        best_size=$probe_size
+                        best_offset=$offset
+                        cp "$probe_file" "$IMAGES_DIR/$filename"
+                    fi
+                fi
+                rm -f "$probe_file"
+            fi
+        done
+
+        if [ "$best_offset" -ne 0 ]; then
+            new_secs=$(( base_secs + best_offset ))
+            new_ts=$(printf "%02d:%02d" $((new_secs/60)) $((new_secs%60)))
+            echo "    ⚡ Blur probe: shifted ${ts} → ${new_ts} (+${best_offset}s, JPEG ${frame_size}→${best_size} bytes)"
+            ts="$new_ts"
+        fi
+
+        frame_size=$best_size
         echo "    → $filename ($(( frame_size / 1024 ))KB)"
 
         # Build manifest entry
