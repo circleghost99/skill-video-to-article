@@ -53,9 +53,9 @@ metadata:
 如果你看到 `[CONTEXT COMPACTION]` 訊息，代表之前的對話被壓縮了。**必須立即執行以下恢復動作**：
 
 1. **重讀本 Skill**：`skill_view(name='video-to-article')` — 重新載入完整規則
-2. **列出待完成步驟**：根據壓縮摘要中的進度，列出 Step 01-08 中尚未完成的步驟
+2. **讀取 todo list**：`todo()` — 查看 pipeline 進度（compaction 後已自動保留）
 3. **確認工作目錄**：`ls {temp_dir}/` 確認已有的產出物
-4. **從斷點繼續**：不要重做已完成的步驟
+4. **從斷點繼續**：按 todo list 中第一個 `pending` 的步驟繼續，不要重做已完成的步驟
 
 ---
 
@@ -85,6 +85,25 @@ bash ${HERMES_SKILL_DIR}/scripts/prepare_temp_dir.sh
 ```
 
 建立本次 session 專屬暫存目錄，後續所有中繼檔案存於此。
+
+**Step 01 完成後，立刻用 `todo` 工具建立 pipeline checklist：**
+
+```
+todo({
+  "todos": [
+    {"id": "s01", "content": "環境初始化", "status": "completed"},
+    {"id": "s02", "content": "Gemini 視覺分析 → analysis.json", "status": "pending"},
+    {"id": "s03", "content": "素材擷取 + 品質檢查(delegate) → images/ + manifest.json", "status": "pending"},
+    {"id": "s04", "content": "字幕獲取清理 → transcript_clean.txt", "status": "pending"},
+    {"id": "s05", "content": "主題地圖萃取 → notes_theme-map.md", "status": "pending"},
+    {"id": "s06", "content": "草稿撰寫（純文字）→ article_draft.md", "status": "pending"},
+    {"id": "s07", "content": "審校配圖(delegate) → article_draft.md（含圖）", "status": "pending"},
+    {"id": "s08", "content": "Final Gate + 預覽 + 交付", "status": "pending"}
+  ]
+})
+```
+
+每完成一個步驟，用 `todo({"todos": [{"id": "sNN", "status": "completed"}], "merge": true})` 更新進度。
 
 ### Step 02: Gemini 視覺分析（預設必做）
 
@@ -163,29 +182,19 @@ bash ${HERMES_SKILL_DIR}/scripts/extract_assets.sh \
 
 **影片路徑：** `analysis.json` 的 `metadata.local_video_path` 包含已下載影片的本地路徑。`extract_assets.sh` 應使用此路徑，**不要重新下載影片**。
 
-**品質檢查（必做，不可跳過）：**
+**品質檢查（必做，不可跳過）— 使用 `delegate_task` 執行：**
 
-⚠️ **Vision 回覆長度限制**：所有 `vision_analyze` 的 `question` 參數必須以「回答限 1-2 句話」結尾。
-長篇 vision 回覆會撐爆 context window。
+⚠️ **品質檢查必須用 `delegate_task` 執行**。Vision 回傳會佔大量 context，用子代理做完即丟。
 
-素材擷取完成後，執行以下檢查流程：
-
-1. **Contact sheet 快篩**：用 `vision_analyze` 看 contact sheet，question 寫：「這 9 張縮圖中，哪幾張是純講者畫面（沒有投影片）？哪幾張有模糊？回答限 1-2 句話，只列編號。」
-2. **逐張深檢**：對所有 `importance: high` 的 key_frame，**逐張** `vision_analyze` 確認，question 寫：「這張截圖文字是否清晰可讀、無模糊殘影？投影片是否完整展開？回答限 1 句：OK 或描述問題。」
-3. **GIF 首尾幀檢查**：`vision_analyze` 不支援 `.gif` 檔案；每個 GIF 必須擷取**初始幀與最後一幀**各看一次，question 寫：「這是 GIF 的首/尾幀。畫面是否有實質內容（非黑屏/logo）？回答限 1 句。」
-4. **修復流程**：發現問題幀時，用 ffmpeg 在 ±1~2 秒範圍嘗試多個時間點，再次 `vision_analyze` 選最清晰的替換
-
-⚠️ 「只看 contact sheet」不夠！縮圖太小看不出文字模糊，必須逐張檢查 high importance 幀。
-
-GIF 首尾幀擷取範例：
-```bash
-gif="images/gif_01_02_07-02_17.gif"
-frames=$(ffprobe -v error -count_frames -select_streams v:0 -show_entries stream=nb_read_frames -of csv=p=0 "$gif")
-last=$((frames - 1))
-ffmpeg -y -i "$gif" -vf "select='eq(n,0)'" -frames:v 1 /tmp/gif_first.jpg
-ffmpeg -y -i "$gif" -vf "select='eq(n,'"$last"')'" -frames:v 1 /tmp/gif_last.jpg
-# 然後分別用 vision_analyze 看 /tmp/gif_first.jpg 與 /tmp/gif_last.jpg
 ```
+delegate_task({
+  goal: "品質檢查所有擷取的截圖和 GIF",
+  context: "工作目錄: {temp_dir}\n\n檢查 {temp_dir}/images/ 裡所有截圖和 GIF 的品質。\n\n【檢查項目】\n1. Contact sheet 快篩：用 vision_analyze 看 {temp_dir}/images/contact_sheet.jpg，question 寫：『這 9 張縮圖中，哪幾張是純講者畫面（沒有投影片）？哪幾張有模糊？回答限 1-2 句話，只列編號。』\n2. 逐張深檢：對所有 importance: high 的 key_frame，逐張 vision_analyze 確認，question 寫：『這張截圖文字是否清晰可讀、無模糊殘影？投影片是否完整展開？回答限 1 句：OK 或描述問題。』\n3. GIF 首尾幀檢查：每個 GIF 用 ffmpeg 擷取首幀和尾幀，vision_analyze 確認有實質內容。\n   擷取指令：ffmpeg -y -i GIF路徑 -vf \"select='eq(n,0)'\" -frames:v 1 /tmp/gif_first.jpg\n4. 修復：發現問題幀時，用 ffmpeg 在 ±1~2 秒範圍嘗試替換。\n\n【回傳格式】\n只回傳簡短摘要：\n- 通過的幀數\n- 需替換的幀及替換結果\n- 最終確認：全部 OK 或仍有問題",
+  toolsets: ["vision", "terminal"]
+})
+```
+
+子代理完成後，主 Agent 只會收到一段簡短的摘要結果（~200 字），不會佔用主 context。
 
 ### Step 04: 字幕獲取與清理
 
