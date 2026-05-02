@@ -95,10 +95,7 @@ ANALYSIS_PROMPT = """\
     }
   ],
   "content_summary": "<100字以內的影片核心內容摘要>",
-  "cover_frame": {
-    "timestamp": "MM:SS",
-    "reason": "<為什麼這張最適合當封面（一句話）>"
-  }
+  "cover_frame": null
 }
 
 === 嚴格規則（違反任何一條將導致任務失敗）===
@@ -172,13 +169,8 @@ ANALYSIS_PROMPT = """\
 7. 按時間順序排列。
 8. 不要輸出任何 JSON 以外的文字。
 
-9. 【封面圖選擇】
-   cover_frame 必須從 key_frames 中挑選「最適合當文章封面」的一張。
-   選擇標準（優先順序）：
-   - 有清晰的大標題或核心概念圖（如「The Sprint Process」）
-   - 資訊密度高但不雜亂（如架構圖、流程圖）
-   - 視覺衝擊力強（色彩豐富、排版搶眼）
-   ❌ 不適合當封面：純文字、純講者、深色 terminal 畫面、密密麻麻的程式碼。
+9. 【封面圖】
+   cover_frame 設為 null。封面圖由腳本自動處理（YouTube 影片使用 YouTube 縮圖）。
 """
 
 
@@ -188,6 +180,18 @@ def is_youtube_url(source: str) -> bool:
         if re.match(pattern, source):
             return True
     return False
+
+
+def extract_youtube_id(url: str) -> Optional[str]:
+    """Extract video ID from a YouTube URL."""
+    patterns = [
+        r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/)([a-zA-Z0-9_-]{11})',
+    ]
+    for p in patterns:
+        m = re.search(p, url)
+        if m:
+            return m.group(1)
+    return None
 
 
 def get_youtube_duration(url: str) -> Optional[float]:
@@ -328,6 +332,7 @@ def analyze_video(
 
     # Track temp files for cleanup
     temp_files_to_clean = []
+    original_source = source  # Preserve for YouTube thumbnail extraction
 
     if youtube:
         logger.info("YouTube URL detected: %s", source)
@@ -640,6 +645,12 @@ def analyze_video(
     # Add duration if known
     if local_duration:
         result["metadata"]["video_duration_seconds"] = round(local_duration, 1)
+
+    # Add YouTube thumbnail URL if source is YouTube
+    yt_id = extract_youtube_id(original_source)
+    if yt_id:
+        result["metadata"]["youtube_thumbnail_url"] = f"https://img.youtube.com/vi/{yt_id}/maxresdefault.jpg"
+        result["metadata"]["youtube_video_id"] = yt_id
 
     # --- Write output ---
     if output_path:

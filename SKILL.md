@@ -121,7 +121,9 @@ python3 ${HERMES_SKILL_DIR}/scripts/video_analyzer.py "<影片來源>" \
     "content_summary": "..."
   },
   "metadata": {
-    "tokens": { "input_tokens": 124740, "estimated_cost_usd": 0.019 }
+    "tokens": { "input_tokens": 124740, "estimated_cost_usd": 0.019 },
+    "youtube_thumbnail_url": "https://img.youtube.com/vi/VIDEO_ID/maxresdefault.jpg",
+    "youtube_video_id": "VIDEO_ID"
   }
 }
 ```
@@ -223,10 +225,11 @@ bash ${HERMES_SKILL_DIR}/scripts/extract_assets.sh \
 3. 根據反饋修正
 4. 依使用者指示發布：
    ```bash
-   # ✅ 只需兩個參數！frontmatter 中的 tags/url/note/cover 會自動讀取
-   # ❌ 不要再手動傳 --tags --url --note --image，那些已在 frontmatter 裡
-   python3 ~/.hermes/skills/openclaw-imports/circleghost-content-hamster-reporting/scripts/python/notion_hamster_push.py \
-     --title "文章標題" --file article_draft.md
+    # ✅ 只需兩個參數！frontmatter 中的 tags/url/note/cover 會自動讀取
+    # ❌ 不要再手動傳 --tags --url --note --image，那些已在 frontmatter 裡
+    # ⭐ cover_image：YouTube 影片直接用 analysis.json 裡的 youtube_thumbnail_url
+    python3 ~/.hermes/skills/openclaw-imports/circleghost-content-hamster-reporting/scripts/python/notion_hamster_push.py \
+      --title "文章標題" --file article_draft.md
    ```
    推送成功後會自動生成 `notion_manifest.json`（image→block_id 映射）。
 
