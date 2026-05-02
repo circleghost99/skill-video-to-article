@@ -350,9 +350,16 @@ def analyze_video(
             import subprocess
             import tempfile
             logger.info("Downloading YouTube video for audio stripping...")
-            tmp_yt = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-            tmp_yt_path = tmp_yt.name
-            tmp_yt.close()
+            # Download to output dir so Step 03 can reuse it (avoid double-download)
+            _out_dir = Path(output_path).parent if output_path else None
+            if _out_dir and _out_dir.exists():
+                tmp_yt_path = str(_out_dir / "video_source.mp4")
+                tmp_yt = None
+            else:
+                tmp_yt = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+                tmp_yt_path = tmp_yt.name
+                tmp_yt.close()
+            _yt_is_persistent = (tmp_yt is None)  # True if saved to output dir
             try:
                 dl_result = subprocess.run(
                     ["yt-dlp", "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]",
@@ -369,7 +376,8 @@ def analyze_video(
                 Path(tmp_yt_path).unlink(missing_ok=True)
                 return _error_result(f"yt-dlp download error: {e}", stage="youtube_download")
 
-            temp_files_to_clean.append(tmp_yt_path)
+            if not _yt_is_persistent:
+                temp_files_to_clean.append(tmp_yt_path)
             logger.info("YouTube download complete. Stripping audio...")
             stripped = strip_audio_from_video(tmp_yt_path)
             if stripped:
@@ -653,6 +661,14 @@ def analyze_video(
     if yt_id:
         result["metadata"]["youtube_thumbnail_url"] = f"https://img.youtube.com/vi/{yt_id}/maxresdefault.jpg"
         result["metadata"]["youtube_video_id"] = yt_id
+
+    # Record local video path for Step 03 (extract_assets.sh) to avoid re-download
+    if output_path:
+        _out_dir = Path(output_path).parent
+        _persisted = _out_dir / "video_source.mp4"
+        if _persisted.exists():
+            result["metadata"]["local_video_path"] = str(_persisted)
+            logger.info("Video preserved for asset extraction: %s", _persisted)
 
     # --- Write output ---
     if output_path:

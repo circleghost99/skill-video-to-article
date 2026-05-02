@@ -48,6 +48,15 @@ metadata:
 4. **路徑規則**：`${HERMES_SKILL_DIR}` 已由 Hermes 自動展開為本 Skill 的絕對路徑。直接複製貼上指令即可，**絕對不要自行推測或硬編碼路徑**
 5. **配圖定位**：本 Skill 的配圖 = **影片原始截圖**（透過 Gemini 分析 + ffmpeg 擷取）。Step 02 和 Step 03 是**預設必做**，不需要使用者明確要求。如果使用者額外需要 AI 生成的插圖，會另外指定使用 `baoyu-article-illustrator` 等生圖 Skill，**v2a 本身不負責 AI 生圖**
 
+### ⚠️ Context Compaction 恢復規則
+
+如果你看到 `[CONTEXT COMPACTION]` 訊息，代表之前的對話被壓縮了。**必須立即執行以下恢復動作**：
+
+1. **重讀本 Skill**：`skill_view(name='video-to-article')` — 重新載入完整規則
+2. **列出待完成步驟**：根據壓縮摘要中的進度，列出 Step 01-08 中尚未完成的步驟
+3. **確認工作目錄**：`ls {temp_dir}/` 確認已有的產出物
+4. **從斷點繼續**：不要重做已完成的步驟
+
 ---
 
 ## 工作流（8 步）
@@ -152,16 +161,18 @@ bash ${HERMES_SKILL_DIR}/scripts/extract_assets.sh \
 ❌ **不要用 nano-banana-pro 或其他 AI 工具另外生成封面**，直接用 YouTube 縮圖。
 在 frontmatter 的 `cover_image` 填入這個 URL 即可。
 
+**影片路徑：** `analysis.json` 的 `metadata.local_video_path` 包含已下載影片的本地路徑。`extract_assets.sh` 應使用此路徑，**不要重新下載影片**。
+
 **品質檢查（必做，不可跳過）：**
+
+⚠️ **Vision 回覆長度限制**：所有 `vision_analyze` 的 `question` 參數必須以「回答限 1-2 句話」結尾。
+長篇 vision 回覆會撐爆 context window。
 
 素材擷取完成後，執行以下檢查流程：
 
-1. **Contact sheet 快篩**：用 `vision_analyze` 看 contact sheet，快速發現明顯問題。可把 contact sheet 發到 Discord 讓阿魁參考，但**不需要等待阿魁審圖**才繼續，除非使用者明確要求停等。
-2. **逐張深檢**：對所有 `importance: high` 的 key_frame，**逐張** `vision_analyze` 確認：
-   - 文字是否清晰可讀？（不是動態模糊/過渡動畫中間態）
-   - 投影片/UI 內容是否完整展開？（不是半顯示狀態）
-   - 有沒有講者遮擋主要內容？
-3. **GIF 首尾幀檢查**：`vision_analyze` 不支援 `.gif` 檔案；每個 GIF 必須擷取**初始幀與最後一幀**各看一次，確認開始與結尾畫面都完整、有意義，不是 logo 過渡幀或動畫切到一半。
+1. **Contact sheet 快篩**：用 `vision_analyze` 看 contact sheet，question 寫：「這 9 張縮圖中，哪幾張是純講者畫面（沒有投影片）？哪幾張有模糊？回答限 1-2 句話，只列編號。」
+2. **逐張深檢**：對所有 `importance: high` 的 key_frame，**逐張** `vision_analyze` 確認，question 寫：「這張截圖文字是否清晰可讀、無模糊殘影？投影片是否完整展開？回答限 1 句：OK 或描述問題。」
+3. **GIF 首尾幀檢查**：`vision_analyze` 不支援 `.gif` 檔案；每個 GIF 必須擷取**初始幀與最後一幀**各看一次，question 寫：「這是 GIF 的首/尾幀。畫面是否有實質內容（非黑屏/logo）？回答限 1 句。」
 4. **修復流程**：發現問題幀時，用 ffmpeg 在 ±1~2 秒範圍嘗試多個時間點，再次 `vision_analyze` 選最清晰的替換
 
 ⚠️ 「只看 contact sheet」不夠！縮圖太小看不出文字模糊，必須逐張檢查 high importance 幀。
