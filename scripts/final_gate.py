@@ -167,22 +167,43 @@ def run_gate(article: Path, write: bool = True) -> Tuple[int, List[str], List[st
     if not article.exists() or not article.is_file():
         return 2, [], [f"file not found: {article}"]
 
-    text = article.read_text(encoding="utf-8")
-    normalized_text, messages = normalize_text(text)
-    if write and normalized_text != text:
+    raw_text = article.read_text(encoding="utf-8")
+    lines = raw_text.splitlines(keepends=True)
+
+    # Identify frontmatter boundaries BEFORE normalization
+    fm_end_idx = None
+    if lines and lines[0].strip() == "---":
+        for idx in range(1, len(lines)):
+            if lines[idx].strip() == "---":
+                fm_end_idx = idx
+                break
+
+    # Normalize ONLY body text (skip frontmatter to avoid corrupting YAML)
+    if fm_end_idx is not None:
+        frontmatter = "".join(lines[: fm_end_idx + 1])
+        body = "".join(lines[fm_end_idx + 1 :])
+    else:
+        frontmatter = ""
+        body = raw_text
+
+    normalized_body, messages = normalize_text(body)
+    normalized_text = frontmatter + normalized_body
+
+    if write and normalized_text != raw_text:
         article.write_text(normalized_text, encoding="utf-8")
 
-    lines = normalized_text.splitlines()
-    fm_end = frontmatter_end(lines)
-    body_text = non_code_body_text(lines, fm_end)
+    # Re-parse for checks
+    final_lines = normalized_text.splitlines()
+    fm_end = frontmatter_end(final_lines)
+    body_text = non_code_body_text(final_lines, fm_end)
 
     errors: List[str] = []
-    errors.extend(find_body_dividers(lines, fm_end))
-    errors.extend(find_continuous_images(lines, fm_end))
+    errors.extend(find_body_dividers(final_lines, fm_end))
+    errors.extend(find_continuous_images(final_lines, fm_end))
 
-    if HTML_TAG_RE.search(normalized_text):
+    if HTML_TAG_RE.search(normalized_body):
         errors.append("html tag")
-    if "\u2014" in normalized_text or "\u2015" in normalized_text:
+    if "\u2014" in normalized_body or "\u2015" in normalized_body:
         errors.append("dash residue")
 
     errors.extend(find_zh_en_spacing_issues(body_text))

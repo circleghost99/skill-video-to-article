@@ -107,6 +107,28 @@ class FinalGateTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("OK: final article gate passed", result.stdout)
 
+    def test_frontmatter_with_dashes_preserved_intact(self):
+        """Frontmatter containing em dashes must NOT be modified by normalization."""
+        frontmatter = (
+            '---\n'
+            'title: "YC Diana Hu：AI 原生公司"\n'
+            'hamster_note: "封閉迴路——這三件事加在一起"\n'
+            '---\n'
+        )
+        article = self.make_article(
+            frontmatter + "\n正文內容。\n"
+        )
+
+        result = self.run_gate(article)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        text = article.read_text(encoding="utf-8")
+        # Frontmatter must be byte-identical
+        self.assertTrue(text.startswith(frontmatter),
+                        f"Frontmatter was corrupted:\n{text[:200]}")
+        # Body em dash would be converted, but frontmatter's should survive
+        self.assertIn('封閉迴路——這三件事加在一起', text)
+
 
 if __name__ == "__main__":
     unittest.main()
