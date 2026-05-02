@@ -571,6 +571,50 @@ def analyze_video(
         except (KeyError, ValueError, IndexError):
             pass  # skip malformed segments
 
+    # --- Post-process: cap speaker frames to max 1 ---
+    key_frames = analysis.get("key_frames", [])
+    speaker_keywords = ["講者", "speaker", "人物", "近景", "自我介紹", "介紹畫面"]
+    speaker_frames = [kf for kf in key_frames if any(kw in kf.get("description", "").lower() for kw in speaker_keywords)]
+    if len(speaker_frames) > 1:
+        # Keep only the first speaker frame, remove the rest
+        keep = speaker_frames[0]
+        for sf in speaker_frames[1:]:
+            key_frames.remove(sf)
+            logger.warning("Removed extra speaker frame at %s: %s", sf.get("timestamp"), sf.get("description", "")[:60])
+        analysis["key_frames"] = key_frames
+
+    # --- Post-process: cap GIF count to max 5 (keep highest priority) ---
+    MAX_GIFS = 5
+    gif_segments = analysis.get("gif_segments", [])
+    if len(gif_segments) > MAX_GIFS:
+        logger.warning("Too many GIFs (%d), trimming to %d", len(gif_segments), MAX_GIFS)
+        analysis["gif_segments"] = gif_segments[:MAX_GIFS]
+
+    # --- Post-process: deduplicate key_frames that overlap with gif_segments ---
+    gif_segments = analysis.get("gif_segments", [])
+    key_frames = analysis.get("key_frames", [])
+    gif_ranges = []
+    for seg in gif_segments:
+        try:
+            sp = seg["start_time"].split(":")
+            ep = seg["end_time"].split(":")
+            gif_ranges.append((int(sp[0]) * 60 + int(sp[1]), int(ep[0]) * 60 + int(ep[1])))
+        except (KeyError, ValueError, IndexError):
+            pass
+    deduped = []
+    for kf in key_frames:
+        try:
+            tp = kf["timestamp"].split(":")
+            t_secs = int(tp[0]) * 60 + int(tp[1])
+            overlaps = any(gs - 3 <= t_secs <= ge + 3 for gs, ge in gif_ranges)
+            if overlaps:
+                logger.warning("Removed key_frame at %s (overlaps with GIF range)", kf["timestamp"])
+                continue
+        except (KeyError, ValueError, IndexError):
+            pass
+        deduped.append(kf)
+    analysis["key_frames"] = deduped
+
     # --- Build result ---
     result = {
         "success": True,
