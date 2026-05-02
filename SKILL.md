@@ -208,6 +208,9 @@ bash ${HERMES_SKILL_DIR}/scripts/extract_assets.sh \
 4. **圖片路徑直接用本地絕對路徑**（如 `/var/folders/.../images/frame_01.jpg`）
    - `notion_hamster_push.py` 會自動上傳到 Cloudinary 並替換為 CDN URL
    - ⚠️ 不需要手動上傳 Cloudinary！
+5. ❌ **禁止連續圖片**：兩張圖/GIF 之間必須有至少一段文字說明，不可紧接插入
+   - 如果兩張圖屬於同一段落，只保留最有代表性的一張
+   - 如果兩張圖都必要，在中間插入轉場文字解說它們的差異
 
 **Phase 3：格式品質閘門**
 1. `grep -o '<[^>]*>' article_draft.md` 確認無 HTML tag 殘留
