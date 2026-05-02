@@ -146,7 +146,9 @@ bash ${HERMES_SKILL_DIR}/scripts/extract_assets.sh \
 - `images/gif_NN_MM_SS-MM_SS.gif` — 動態片段（≤12 秒）
 - `manifest.json` — 整合索引
 
-**封面圖：** `analysis.json` 包含 `cover_frame` 欄位（時間戳＋原因），用於後續 Notion 發布時的封面圖選擇。
+**封面圖：** YouTube 影片的封面圖已自動寫入 `analysis.json` 的 `metadata.youtube_thumbnail_url`。
+❌ **不要用 nano-banana-pro 或其他 AI 工具另外生成封面**，直接用 YouTube 縮圖。
+在 frontmatter 的 `cover_image` 填入這個 URL 即可。
 
 **品質檢查（必做，不可跳過）：**
 
@@ -160,6 +162,12 @@ bash ${HERMES_SKILL_DIR}/scripts/extract_assets.sh \
 3. **修復流程**：發現問題幀時，用 ffmpeg 在 ±1~2 秒範圍嘗試多個時間點，再次 `vision_analyze` 選最清晰的替換
 
 ⚠️ 「只看 contact sheet」不夠！縮圖太小看不出文字模糊，必須逐張檢查 high importance 幀。
+
+⚠️ `vision_analyze` 不支援 `.gif` 檔案。檢查 GIF 時，先用 ffmpeg 擷取首幀再分析：
+```bash
+ffmpeg -i images/gif_01_*.gif -vframes 1 /tmp/gif_check.jpg
+# 然後用 vision_analyze 看 /tmp/gif_check.jpg
+```
 
 ### Step 04: 字幕獲取與清理
 
@@ -203,7 +211,10 @@ bash ${HERMES_SKILL_DIR}/scripts/extract_assets.sh \
 4. 確認術語翻譯一致性（同一專有名詞不能一下中文一下英文）
 5. 確認無英文殘留混雜（技術名詞除外）
 
-**Phase 2：配圖 — 嵌入截圖/GIF（使用本地路徑）**
+**Phase 2：配圖 — 嵌入截圖/GIF（使用本地路徑）⚠️ 不可跳過**
+
+❌ **絕對不可以提交一篇沒有圖片的文章。** 每篇文章至少要有 3 張配圖。
+
 1. 讀取 `manifest.json`，依時間順序將截圖/GIF 嵌入文章對應段落
 2. 按 manifest 去重結果嵌入，不重複放（同一內容只有 frame 或 GIF）
 3. 每張圖的 alt text 要有描述性（不要寫「圖片」）
@@ -216,7 +227,7 @@ bash ${HERMES_SKILL_DIR}/scripts/extract_assets.sh \
 
 **Phase 3：格式品質閘門**
 1. `grep -o '<[^>]*>' article_draft.md` 確認無 HTML tag 殘留
-2. `grep -a $'\xe2\x80\x94' article_draft.md` 確認無 em dash 殘留
+2. em dash（`—`）和雙逗號（`，，`）**不需要手動處理** — `notion_hamster_push.py` 會自動清理
 3. 確認符合 `references/output-format.md` §10 格式禁止項
 
 **交付：**
