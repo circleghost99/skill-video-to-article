@@ -64,6 +64,9 @@ todo({
 })
 ```
 
+7. **禁止輪詢腳本狀態**：`video_analyzer.py` 和 `extract_assets.sh` 跑的時候，**不要**用 `ps aux`、`top`、`ls -la` 反覆查看狀態。這些指令的輸出會灌進 context（上次 `ps aux | grep gemini` 一個指令就吃掉 12,000 tokens）。腳本有 timeout 參數，耐心等它結束即可
+8. **禁止手動 Cloudinary 上傳**：Discord 預覽只需發 contact sheet 的路徑或描述。圖片 CDN 上傳由 `notion_hamster_push.py --file` 統一處理，不要在 Step 08 之前手動呼叫 Cloudinary API
+
 ### ⚠️ Context Compaction 恢復規則
 
 如果你看到 `[CONTEXT COMPACTION]` 訊息，代表之前的對話被壓縮了。**必須立即執行以下恢復動作**：
