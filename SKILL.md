@@ -1,8 +1,8 @@
 ---
 name: video-to-article
 description: |
-  把單支影片（YouTube URL 或本地檔案）轉成結構化解讀型文章，自動提取關鍵投影片截圖與動態 GIF。
-  當使用者說「把這影片整理成文章」「分析這支影片」「擷取簡報截圖」「影片轉文章」時觸發。
+  影片深度解讀 pipeline。從 YouTube 影片或本地影片檔，透過 Gemini 視覺分析、字幕萃取、主題地圖建構、深度解讀寫作，產出圖文並茂的分析文章並推送至 Notion。
+  當使用者說「解讀這個影片」「把這影片整理成文章」「用倉鼠寫文 skill」「分析這支影片」「擷取簡報截圖」「影片轉文章」「v2a」時觸發。
   不適用於：短摘要、逐字稿、純翻譯、多影片整合。
 metadata:
   hermes:
@@ -15,7 +15,23 @@ metadata:
 
 # Video to Article
 
-把單支影片透過 **Gemini 視覺分析 → 智慧截圖 → 結構化文章** 的完整管線。
+影片深度解讀 pipeline：**Gemini 視覺分析 → 智慧截圖 → 主題萃取 → 解讀寫作**，產出圖文並茂的分析文章。
+
+---
+
+## 適用範圍
+
+本 Skill 是倉鼠特報員的**影片解讀 pipeline**，包含視覺分析 + 深度寫作。
+
+| 使用者說 | 用哪個 Skill |
+|----------|-------------|
+| 「解讀這個影片」「寫文」「v2a」「影片轉文章」 | ✅ video-to-article |
+| 「分析這篇文章的寫作技巧」「學習創作手法」 | ❌ 用 `hamster-writing-craft` |
+| 「執行倉鼠特報」「特報」 | ❌ 用 `circleghost-content-hamster-reporting` |
+
+### 寫作方法論依賴
+Step 07 子代理會自動載入 `hamster-writing-craft` skill 的方法論來優化文章敘事結構。
+主 Agent 不需要手動載入該 skill。
 
 ---
 
@@ -232,7 +248,7 @@ delegate_task({
 ```
 delegate_task(
   goal="審校並配圖 video-to-article 文章草稿",
-  context="工作目錄: {temp_dir}\n\n要讀取的檔案:\n- {temp_dir}/article_draft.md（純文字草稿）\n- {temp_dir}/transcript_clean.txt（原始字幕）\n- {temp_dir}/manifest.json（圖片索引，每張圖有 article_context 描述對應段落）\n\n寫作規範（先載入再開始工作）:\n1. skill_view(name='video-to-article', file_path='references/output-format.md') — 格式規範\n2. skill_view(name='hamster-content-analysis') — 倉鼠寫作方法論（Opening Hook、論證框架等）\n\n任務（依序執行）:\n\n【Phase 1 - 內容校對 + 寫作優化】\n1. 讀取 transcript_clean.txt，逐段比對 article_draft.md\n2. 補漏遺漏的：重要論點、數據、具體案例、轉化邏輯\n3. 將遺漏內容融入文章對應段落（不是列清單）\n4. 按 hamster-content-analysis 的寫作方法論優化文章結構和表達\n5. 確認術語翻譯一致性\n\n【Phase 2 - 配圖】\n1. 讀取 manifest.json，根據每張圖的 article_context 插入到文章中對應段落之後\n2. Markdown 圖片格式必須是 ![描述文字](圖片路徑)\n   ✅ 正確：![封閉迴路系統架構圖]({temp_dir}/images/frame_03.jpg)\n   ❌ 錯誤：![{temp_dir}/images/frame_03.jpg]()（路徑放在 alt text 裡是錯的！）\n3. 圖片用本地絕對路徑（如 {temp_dir}/images/frame_01.jpg）\n4. ❌ 禁止把圖片堆在文章最後面（append）——每張圖必須出現在它描述的內容附近\n5. ❌ 禁止連續兩張圖——「連續」的定義是兩張圖之間只有空白行，沒有實質文字。如果兩張圖之間沒有至少一段有意義的中文文字（不算空行），必須合併成一張或在中間加轉場說明\n6. 每篇文章至少 3 張配圖\n7. 每張圖的 alt text 要有描述性（不要寫「圖片」）\n8. ❌ 講者影像數量限制（最重要！）：\\n   - 「講者影像」= 畫面主體是講者本人、沒有投影片/圖表/文字內容的截圖（包括：純臉部特寫、講者坐在桌前說話、講者站在舞台上沒有投影片背景）\\n   - 整篇文章最多只能有 **1 張**講者影像（用於介紹講者段落）\\n   - 如果 manifest 裡有多張講者影像，只選最清晰的 1 張，其餘全部跳過\\n   - 投影片截圖背景裡有講者小窗（picture-in-picture）不算講者影像，可以正常插入\n\n【Phase 3 - 格式檢查 + 自我驗證】\n1. 用 terminal 執行 grep -o '<[^>]*>' article_draft.md 確認無 HTML tag\n2. em dash、U+2015、雙逗號與簡轉繁由 Step 08 主 Agent Final Gate 統一處理；子代理不要自行用 sed/awk 亂改，但若有改文或補圖，仍必須重新跑連續圖片檢查\n3. ⚠️ 必須執行以下自我驗證指令確認沒有連續圖片：\n   python3 -c \"\nwith open('{temp_dir}/article_draft.md') as f:\n    lines = f.readlines()\nimgs = [i for i,l in enumerate(lines) if l.strip().startswith('![')]\nfor j in range(len(imgs)-1):\n    between = lines[imgs[j]+1:imgs[j+1]]\n    if not any(l.strip() and not l.strip().startswith('![') for l in between):\n        print(f'ERROR: 連續圖片 L{imgs[j]+1} & L{imgs[j+1]+1}')\nassert all(any(l.strip() and not l.strip().startswith('![') for l in lines[imgs[j]+1:imgs[j+1]]) for j in range(len(imgs)-1)), '有連續圖片！'\nprint('OK: 無連續圖片')\n\"\n   如果驗證失敗，必須修正後重新驗證\n\n完成後用 terminal 工具寫回 {temp_dir}/article_draft.md",
+  context="工作目錄: {temp_dir}\n\n要讀取的檔案:\n- {temp_dir}/article_draft.md（純文字草稿）\n- {temp_dir}/transcript_clean.txt（原始字幕）\n- {temp_dir}/manifest.json（圖片索引，每張圖有 article_context 描述對應段落）\n\n寫作規範（先載入再開始工作）:\n1. skill_view(name='video-to-article', file_path='references/output-format.md') — 格式規範\n2. skill_view(name='hamster-writing-craft') — 倉鼠寫作方法論（Opening Hook、論證框架等）\n\n任務（依序執行）:\n\n【Phase 1 - 內容校對 + 寫作優化】\n1. 讀取 transcript_clean.txt，逐段比對 article_draft.md\n2. 補漏遺漏的：重要論點、數據、具體案例、轉化邏輯\n3. 將遺漏內容融入文章對應段落（不是列清單）\n4. 按 hamster-writing-craft 的寫作方法論優化文章結構和表達\n5. 確認術語翻譯一致性\n\n【Phase 2 - 配圖】\n1. 讀取 manifest.json，根據每張圖的 article_context 插入到文章中對應段落之後\n2. Markdown 圖片格式必須是 ![描述文字](圖片路徑)\n   ✅ 正確：![封閉迴路系統架構圖]({temp_dir}/images/frame_03.jpg)\n   ❌ 錯誤：![{temp_dir}/images/frame_03.jpg]()（路徑放在 alt text 裡是錯的！）\n3. 圖片用本地絕對路徑（如 {temp_dir}/images/frame_01.jpg）\n4. ❌ 禁止把圖片堆在文章最後面（append）——每張圖必須出現在它描述的內容附近\n5. ❌ 禁止連續兩張圖——「連續」的定義是兩張圖之間只有空白行，沒有實質文字。如果兩張圖之間沒有至少一段有意義的中文文字（不算空行），必須合併成一張或在中間加轉場說明\n6. 每篇文章至少 3 張配圖\n7. 每張圖的 alt text 要有描述性（不要寫「圖片」）\n8. ❌ 講者影像數量限制（最重要！）：\\n   - 「講者影像」= 畫面主體是講者本人、沒有投影片/圖表/文字內容的截圖（包括：純臉部特寫、講者坐在桌前說話、講者站在舞台上沒有投影片背景）\\n   - 整篇文章最多只能有 **1 張**講者影像（用於介紹講者段落）\\n   - 如果 manifest 裡有多張講者影像，只選最清晰的 1 張，其餘全部跳過\\n   - 投影片截圖背景裡有講者小窗（picture-in-picture）不算講者影像，可以正常插入\n\n【Phase 3 - 格式檢查 + 自我驗證】\n1. 用 terminal 執行 grep -o '<[^>]*>' article_draft.md 確認無 HTML tag\n2. em dash、U+2015、雙逗號與簡轉繁由 Step 08 主 Agent Final Gate 統一處理；子代理不要自行用 sed/awk 亂改，但若有改文或補圖，仍必須重新跑連續圖片檢查\n3. ⚠️ 必須執行以下自我驗證指令確認沒有連續圖片：\n   python3 -c \"\nwith open('{temp_dir}/article_draft.md') as f:\n    lines = f.readlines()\nimgs = [i for i,l in enumerate(lines) if l.strip().startswith('![')]\nfor j in range(len(imgs)-1):\n    between = lines[imgs[j]+1:imgs[j+1]]\n    if not any(l.strip() and not l.strip().startswith('![') for l in between):\n        print(f'ERROR: 連續圖片 L{imgs[j]+1} & L{imgs[j+1]+1}')\nassert all(any(l.strip() and not l.strip().startswith('![') for l in lines[imgs[j]+1:imgs[j+1]]) for j in range(len(imgs)-1)), '有連續圖片！'\nprint('OK: 無連續圖片')\n\"\n   如果驗證失敗，必須修正後重新驗證\n\n完成後用 terminal 工具寫回 {temp_dir}/article_draft.md",
   toolsets=["terminal", "file", "skills", "vision"]
 )
 ```
