@@ -188,8 +188,8 @@ bash ${HERMES_SKILL_DIR}/scripts/extract_assets.sh \
 
 ```
 delegate_task({
-  goal: "品質檢查所有擷取的截圖和 GIF",
-  context: "工作目錄: {temp_dir}\n\n檢查 {temp_dir}/images/ 裡所有截圖和 GIF 的品質。\n\n【檢查項目】\n1. Contact sheet 快篩：用 vision_analyze 看 {temp_dir}/images/contact_sheet.jpg，question 寫：『這 9 張縮圖中，哪幾張是純講者畫面（沒有投影片）？哪幾張有模糊？回答限 1-2 句話，只列編號。』\n2. 逐張深檢：對所有 importance: high 的 key_frame，逐張 vision_analyze 確認，question 寫：『這張截圖文字是否清晰可讀、無模糊殘影？投影片是否完整展開？回答限 1 句：OK 或描述問題。』\n3. GIF 首尾幀檢查：每個 GIF 用 ffmpeg 擷取首幀和尾幀，vision_analyze 確認有實質內容。\n   擷取指令：ffmpeg -y -i GIF路徑 -vf \"select='eq(n,0)'\" -frames:v 1 /tmp/gif_first.jpg\n4. 修復：發現問題幀時，用 ffmpeg 在 ±1~2 秒範圍嘗試替換。\n\n【回傳格式】\n只回傳簡短摘要：\n- 通過的幀數\n- 需替換的幀及替換結果\n- 最終確認：全部 OK 或仍有問題",
+  goal: "品質檢查所有擷取的截圖和 GIF — 含人物幀修正",
+  context: "工作目錄: {temp_dir}\n影片路徑: 從 {temp_dir}/analysis.json 的 metadata.local_video_path 取得\n\n檢查 {temp_dir}/images/images/ 裡所有截圖和 GIF 的品質。\n\n【最高優先：人物幀偵測與修正】\nGemini 分析的時間戳常有 ±2-5 秒誤差，導致截到講者 talking head 而非投影片。\n處理流程：\n1. 逐張 vision_analyze 每個 frame_*.jpg，question 寫：\n   『這張圖片的主體是什麼？(a) 投影片/圖表/文字內容 (b) 純人物（講者說話、無投影片）。回答 a 或 b 加一句描述。』\n2. 對所有判定為 (b) 的幀，讀取 analysis.json 取得原始時間戳，用 ffmpeg 在 ±2s、±4s、±6s 共 6 個偏移點重新擷取候選幀：\n   ffmpeg -ss {秒數±偏移} -i {影片路徑} -vframes 1 -q:v 2 -update 1 /tmp/candidate_{offset}.jpg -y -loglevel error\n3. 對候選幀再用 vision_analyze（question 同上）找出有實質內容的最佳幀\n4. 用最佳候選幀覆蓋原始檔案：cp /tmp/candidate_best.jpg {原始幀路徑}\n5. 如果 6 個偏移點都是人物，該幀從 manifest.json 刪除（寧缺勿錯）\n\n【其他檢查項目】\n1. 模糊檢查：逐張確認文字清晰可讀、無動態模糊殘影。question 寫：『文字是否清晰可讀、無模糊？回答限 1 句：OK 或描述問題。』\n2. GIF 首尾幀：每個 GIF 用 ffmpeg 擷取首幀和尾幀，確認有實質內容不是黑屏。\n   擷取指令：ffmpeg -y -i GIF路徑 -vf \"select='eq(n,0)'\" -frames:v 1 /tmp/gif_first.jpg\n3. 修復模糊幀：用 ffmpeg 在 ±1~2 秒範圍嘗試替換。\n\n【回傳格式】\n只回傳簡短摘要：\n- 人物幀：偵測到 N 張 → 修正 M 張 / 刪除 K 張\n- 模糊幀：偵測到 N 張 → 修正結果\n- GIF 品質：通過/問題\n- 最終確認：全部 OK 或仍有問題",
   toolsets: ["vision", "terminal"]
 })
 ```
