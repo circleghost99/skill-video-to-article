@@ -47,6 +47,22 @@ metadata:
 3. **不跳步驟**：必須按 01→02→...→07 順序執行，禁止跳步
 4. **路徑規則**：`${HERMES_SKILL_DIR}` 已由 Hermes 自動展開為本 Skill 的絕對路徑。直接複製貼上指令即可，**絕對不要自行推測或硬編碼路徑**
 5. **配圖定位**：本 Skill 的配圖 = **影片原始截圖**（透過 Gemini 分析 + ffmpeg 擷取）。Step 02 和 Step 03 是**預設必做**，不需要使用者明確要求。如果使用者額外需要 AI 生成的插圖，會另外指定使用 `baoyu-article-illustrator` 等生圖 Skill，**v2a 本身不負責 AI 生圖**
+6. **Pipeline Checklist**：讀完本 SKILL 後，**第一件事**是呼叫 `todo` 建立 pipeline checklist。每完成一步用 `todo(merge=true)` 更新。Checklist 模板：
+
+```
+todo({
+  "todos": [
+    {"id": "s01", "content": "環境初始化", "status": "pending"},
+    {"id": "s02", "content": "Gemini 視覺分析 → analysis.json", "status": "pending"},
+    {"id": "s03", "content": "素材擷取 + 品質檢查(delegate) → images/ + manifest.json", "status": "pending"},
+    {"id": "s04", "content": "字幕獲取清理 → transcript_clean.txt", "status": "pending"},
+    {"id": "s05", "content": "主題地圖萃取 → notes_theme-map.md", "status": "pending"},
+    {"id": "s06", "content": "草稿撰寫（純文字）→ article_draft.md", "status": "pending"},
+    {"id": "s07", "content": "審校配圖(delegate) → article_draft.md（含圖）", "status": "pending"},
+    {"id": "s08", "content": "Final Gate + 預覽 + 交付", "status": "pending"}
+  ]
+})
+```
 
 ### ⚠️ Context Compaction 恢復規則
 
@@ -85,25 +101,6 @@ bash ${HERMES_SKILL_DIR}/scripts/prepare_temp_dir.sh
 ```
 
 建立本次 session 專屬暫存目錄，後續所有中繼檔案存於此。
-
-**Step 01 完成後，立刻用 `todo` 工具建立 pipeline checklist：**
-
-```
-todo({
-  "todos": [
-    {"id": "s01", "content": "環境初始化", "status": "completed"},
-    {"id": "s02", "content": "Gemini 視覺分析 → analysis.json", "status": "pending"},
-    {"id": "s03", "content": "素材擷取 + 品質檢查(delegate) → images/ + manifest.json", "status": "pending"},
-    {"id": "s04", "content": "字幕獲取清理 → transcript_clean.txt", "status": "pending"},
-    {"id": "s05", "content": "主題地圖萃取 → notes_theme-map.md", "status": "pending"},
-    {"id": "s06", "content": "草稿撰寫（純文字）→ article_draft.md", "status": "pending"},
-    {"id": "s07", "content": "審校配圖(delegate) → article_draft.md（含圖）", "status": "pending"},
-    {"id": "s08", "content": "Final Gate + 預覽 + 交付", "status": "pending"}
-  ]
-})
-```
-
-每完成一個步驟，用 `todo({"todos": [{"id": "sNN", "status": "completed"}], "merge": true})` 更新進度。
 
 ### Step 02: Gemini 視覺分析（預設必做）
 
