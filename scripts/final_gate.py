@@ -37,11 +37,20 @@ ZH_EN_STICKY_RE = re.compile(
 def ensure_package(import_name: str, pip_name: str) -> None:
     if importlib.util.find_spec(import_name) is not None:
         return
-    subprocess.check_call(
-        [sys.executable, "-m", "pip", "install", "--user", "--break-system-packages", pip_name],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+
+    base_cmd = [sys.executable, "-m", "pip", "install"]
+    flags = ["--break-system-packages", pip_name]
+    # In Hermes/OpenClaw the active Python is often a virtualenv where `--user`
+    # installs are invisible and pip rejects them. Prefer a normal venv install
+    # there; keep `--user` only for non-venv system Python fallback.
+    in_venv = sys.prefix != getattr(sys, "base_prefix", sys.prefix)
+    cmd = base_cmd + ([] if in_venv else ["--user"]) + flags
+    try:
+        subprocess.check_call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except subprocess.CalledProcessError:
+        if in_venv:
+            raise
+        subprocess.check_call(base_cmd + flags, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def build_tw_converter():
