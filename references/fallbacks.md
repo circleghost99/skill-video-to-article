@@ -1,5 +1,9 @@
 # YouTube v1 Fallbacks & Downgrade Rules
 
+> **坑點記錄（2026-05-17）**
+> - `final_gate.py` 的 `find_body_dividers()` 把 `---` 的允許位置鎖定在「frontmatter 結尾 + body 第一行」。body 中間的 `---`（如分隔正文與倉鼠碎碎念）會觸發 false positive。
+> - **解法**：正文內部分隔改用 `***`（三個星號）或直接刪除分隔線（倉鼠碎碎念本身就是一個明確的 `## H2` 標記，視覺分隔多餘）。日後若 `find_body_dividers` 的 allow-list 擴展至支援 body 中間的 `---`，即可恢復。
+
 這份文件只處理 `video-to-article` v1 的 fallback。
 
 v1 原則：**先把有字幕單片做好。**
@@ -106,7 +110,72 @@ until yt-dlp --write-subs --write-auto-subs --sub-langs ... "$URL"; do
 done
 ```
 
-## 6. 標準 caveat 語句
+## 7. Gemini API 429 / 額度超標處理（Step 02 分析階段）
+
+當 `video_analyzer.py` 在 `generate` 階段遇到 `429 RESOURCE_EXHAUSTED`（月額度用盡）：
+
+1. **影片已下載完成**（`video_source.mp4` 在工作目錄，`analysis.json` 的 `metadata.local_video_path` 有本地路徑）——這個產出不會消失
+2. **Gemini 檔案已完成上傳**（`files/xxx` state=ACTIVE）——第二次執行時腳本會重用上傳結果
+3. **不需要重新下載影片**——直接用 `analysis.json` 的 `metadata.local_video_path` 作為下次輸入
+
+### 重試策略
+
+```bash
+# 等 30-60 秒後，用本地檔案 + --keep-file 重試
+# ⚠️ gemini-2.0-flash 已停用（404 NOT_FOUND: no longer available to new users）
+# 若 2.5-flash 仍 429，說明月度 billing limit 未調高，見下節「仍失敗」處理
+python3 /Users/circleghost/Desktop/開發/SKILL/video-to-article/scripts/video_analyzer.py \
+  "/path/to/video_source.mp4" \
+  -o analysis.json --keep-file --model "gemini-2.5-flash"
+```
+
+### 為何 `--keep-file` 重要
+
+第二次執行時若附 `--keep-file`，`video_analyzer.py` 會：
+- 直接上傳本地檔案（不重新下載 YouTube）
+- 在 429 發生時，**Gemini 檔案 URI 仍存在**，可用本地路徑重試
+- 節省 30-60 秒上傳時間 + 不重新下載影片
+
+### 模型降級注意
+
+- `gemini-2.0-flash` 已於 2026 年停用（404 NOT_FOUND），**不可再做為降級選項**
+- `gemini-2.5-flash` 是目前唯一穩定可用的降級目標
+- 若 `gemini-2.5-flash` 仍 429，代表月度 billing limit 真的用盡（而非模型問題）
+  - 此時仍可繼續 **Step 04 字幕萃取**（不依賴 Gemini）
+  - Step 02/03（視覺分析）需等額度恢復或手動提供分析結果
+  - 若本輪需要先交付文章：可降級為「字幕主導解讀文」，但必須明確標註 quality_badge、在回覆中說明無視覺截圖，且嚴禁幻想畫面或硬塞不存在的配圖
+  - `analysis.json` 可能完全不存在或是 0 bytes；此時不要依賴 `analysis.json.metadata.local_video_path`，改用工作目錄中的 `video_source.mp4` 或重新確認本地影片檔存在後再處理字幕/後續人工截圖
+  - 若字幕可用，繼續 Step 04→05→06→07.5→08：主題地圖、純文字草稿、字幕忠實度檢查、Final Gate 與穩定預覽都照跑；Step 03 配圖與 vision QA 標記為 blocked/cancelled，不要硬做
+  - 最終交付時通知使用者：本文是字幕主導版本，配圖待 Gemini 額度恢復或人工確認後補入
+
+### Gemini 額度調整
+
+若遇到 429 並確認是 billing limit：請使用者至 https://ai.studio/spend 調高額度上限。調整後等待 1-2 分鐘再重試。
+
+### ffprobe / ffmpeg PATH 問題（subprocess 情境）
+
+當 `video_analyzer.py` 由 OpenClaw 的 `sessions_spawn` 或 `delegate_task` subprocess 呼叫時，subprocess 的 `$PATH` 不繼承登入 shell 的 PATH，導致 `ffprobe` 或 `ffmpeg` 找不回 `No such file or directory`。
+
+**徵兆**：`ffprobe failed to get duration: [Errno 2] No such file or directory: 'ffprobe'`（但直接執行指令時是好的）
+
+**解法**：在 terminal 指令中明確指定完整路徑：
+```bash
+/opt/homebrew/bin/ffmpeg -y -i "$VIDEO" -ss "$ts" -vframes 1 "$WORK/frames/frame_${ts//:/_}.jpg"
+```
+
+或在使用 OpenClaw subprocess 時，在指令前注入 PATH：
+```bash
+PATH="/opt/homebrew/bin:$PATH" python3 /path/to/video_analyzer.py ...
+```
+
+常見工具路徑（macOS Homebrew）：
+- ffmpeg: `/opt/homebrew/bin/ffmpeg`
+- ffprobe: `/opt/homebrew/bin/ffprobe`
+- yt-dlp: `/opt/homebrew/bin/yt-dlp`
+
+---
+
+## 8. 標準 caveat 語句
 
 ### Auto captions 清理後使用
 `註：本文主要根據 YouTube 自動字幕整理，已做語句清理，但少數術語仍可能與原片略有出入。`
@@ -117,5 +186,8 @@ done
 ### 無法完成完整文章
 `這支影片目前缺少足夠可用字幕；若你要完整文章版，請改給我有字幕版本，或直接提供 transcript。`
 
-### 429 阻斷
+### 429 阻斷（yt-dlp）
 `影片下載被 YouTube 阻斷（429），稍後再試或手動提供影片檔案。`
+
+### Gemini 額度超標阻斷
+`影片視覺分析被 Gemini 額度超標阻斷，請至 https://ai.studio/spend 管理額度。字幕與文章內容不受影響，配圖待額度恢復後補入。`

@@ -210,9 +210,14 @@ def run_gate(article: Path, write: bool = True) -> Tuple[int, List[str], List[st
     errors.extend(find_body_dividers(final_lines, fm_end))
     errors.extend(find_continuous_images(final_lines, fm_end))
 
-    if HTML_TAG_RE.search(normalized_body):
+    # Strip code blocks before HTML-tag / dash checks to avoid false positives
+    # on TypeScript generics (<T>) and similar syntax inside code fences
+    normalized_body_no_code = re.sub(r"```[\s\S]*?```", "", normalized_body)
+    normalized_body_no_code = re.sub(r"`[^`]+`", "", normalized_body_no_code)
+
+    if HTML_TAG_RE.search(normalized_body_no_code):
         errors.append("html tag")
-    if "\u2014" in normalized_body or "\u2015" in normalized_body:
+    if "\u2014" in normalized_body_no_code or "\u2015" in normalized_body_no_code:
         errors.append("dash residue")
 
     errors.extend(find_zh_en_spacing_issues(body_text))

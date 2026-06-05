@@ -6,10 +6,11 @@
 
 v1 先支援：
 - **單支 YouTube**
-- **字幕可取得**
+- **字幕優先**（YT 字幕為主來源）
+- **無字幕時退到本地 ASR（mlx-whisper large-v3）**
 - **字幕驅動的文章化流程**
 
-不要把這份流程當成多平台、多影片、無字幕 ASR pipeline。
+不要把這份流程當成多平台、多影片 pipeline。
 
 ## 1. 暫存目錄
 
@@ -53,53 +54,79 @@ v1 先支援：
 
 ### Step 3 — 下載與保存
 
-**首選：`youtube-transcript-api`（繞過 yt-dlp 429 / impersonate 限制）**
+**首選做法：呼叫 `scripts/get_transcript.py`** ⭐
 
+這支腳本固化了完整的優先鏈，**禁止 agent 自己重寫 Python 抓字幕邏輯**（過去多次因 API 不熟悉、錯誤訊息誤判而走鐘）。
+
+```bash
+/Users/circleghost/.hermes/hermes-agent/venv/bin/python3 \
+  /Users/circleghost/Desktop/開發/SKILL/video-to-article/scripts/get_transcript.py \
+  --url "$URL" \
+  --out-dir "$WORK" \
+  --audio "$WORK/audio.wav" \
+  --lang zh
+```
+
+腳本內部優先順序（YT 字幕為主，本地 ASR 為輔）：
+1. **`youtube-transcript-api`** — 先抓人工字幕，無則退到 auto-caption
+2. **`yt-dlp --write-subs --write-auto-subs`** — 第一次只抓人工，沒有再抓 auto；含 429 退避（5s, 15s）
+3. **`mlx-whisper large-v3` 本地轉錄** — 僅當 1+2 都拿不到任何字幕時才啟動，需傳 `--audio`
+
+**腳本輸出：**
+- `transcript_raw.json` — 段落時間軸 `[{start, duration, text}, ...]`
+- `transcript_clean.txt` — 已清理、依 30 秒切塊、含 `[MM:SS]` 標記
+- stdout: JSON 狀態報告
+
+**狀態報告範例（成功）：**
+```json
+{
+  "ok": true,
+  "method": "youtube-transcript-api",
+  "language": "zh-TW",
+  "is_generated": false,
+  "segments": 2307,
+  "duration_sec": 7157.76,
+  "raw_path": "/path/to/transcript_raw.json",
+  "clean_path": "/path/to/transcript_clean.txt",
+  "quality_badge": "🟢 人工字幕"
+}
+```
+
+`quality_badge` **必須寫進文章 frontmatter** 給讀者透明度（特別是 fallback 到 whisper 時）。
+
+**flag 行為：**
+- `--skip-whisper`：完全禁用 ASR fallback（僅當你明確要求字幕版本，不接受 ASR 結果時用）
+- `--lang en`：英文影片改用此 flag
+
+**錯誤處理：**
+- exit code 2：URL 解析失敗
+- exit code 3：YT 無字幕且未提供 `--audio`（或設了 `--skip-whisper`）
+- exit code 4：所有方法都失敗
+
+收到 exit 3 時，agent 應決定：a) 提示使用者影片無字幕並請求是否啟用 ASR，b) 重跑時補上 `--audio` 路徑。
+
+---
+
+**底層 API 用法（除錯用，平時用腳本就好）**
+
+只有在腳本本身需要修改、或需獨立呼叫某一層時才參考以下範例。
+
+`youtube-transcript-api`（v1.x 正確用法）：
 ```python
 from youtube_transcript_api import YouTubeTranscriptApi
 api = YouTubeTranscriptApi()
-transcript_list = api.list(video_id='VIDEO_ID')
+transcript_list = api.list(video_id='VIDEO_ID')  # ⚠️ 不是 fetch()
 for t in transcript_list:
-    if t.language_code == 'zh':  # 或其他目標語言
-        segs = t.fetch()
-        data = [{'start': s.start, 'duration': s.duration, 'text': s.text} for s in segs]
+    print(t.language_code, t.is_generated)
+chosen = sorted(transcript_list, key=lambda t: (t.is_generated, t.language_code != 'zh-TW'))[0]
+fetched = chosen.fetch()  # iterable of FetchedTranscriptSnippet (text, start, duration)
 ```
 
-**次選：`yt-dlp`（若 youtube-transcript-api 失敗）**
+⚠️ **常見錯誤**：把 `YouTubeTranscriptApi.fetch(...)` 當 class method 呼叫會失敗。**必須先 `api = YouTubeTranscriptApi()` instance 再 `api.list()`**。
 
-下載字幕時，語言代碼必須符合 YouTube 的「翻譯字幕格式」。
+`yt-dlp` 字幕語言代碼可能很怪（`zh-Hans-zh` = 簡體 from 中文 auto-caption）。先 `yt-dlp --list-subs "$URL"` 看清楚再決定 `--sub-langs`。
 
-**語言代碼格式：** `目標語言-來源語言`
-- 例如 `zh-Hans-zh` = Chinese (Simplified) from Chinese（即中文原生的 auto caption）
-- 例如 `en-zh` = English from Chinese（即中文影片被翻譯成英文的 auto caption）
-
-**標準下載命令（適用於多數中文 / 英文影片）：**
-```bash
-yt-dlp --write-subs --write-auto-subs \
-  --sub-langs zh-Hans-zh,zh-Hant-zh,en-zh,en \
-  --skip-download -o "$DEST/subs.%(ext)s" "$URL"
-```
-
-**若上述命令顯示「no subtitles for the requested languages」：**
-1. 先用 `yt-dlp --list-subs "$URL"` 查看該影片真實的字幕代碼
-2. 確認是「翻譯字幕格式」還是「原生字幕格式」
-3. 替換 `--sub-langs` 參數後重試
-
-**若遇到 429 Too Many Requests：**
-- 依 `references/fallbacks.md` 的 429 處理章節處理（先試 youtube-transcript-api，再退避重試）
-
-**保存原則：**
-字幕資料保存為 JSON：
-- `transcript_raw.json`（含時間軸）
-
-清理後保存為：
-- `transcript_clean.txt`（純文字，去時間碼，合併短句）
-
-**當完全無法取得字幕時：**
-若 YouTube 原生無任何字幕，且 `youtube-transcript-api` 與 `yt-dlp` 均失敗：
-1. **停止執行**：不可假造字幕或用 LLM 幻想內容。
-2. 通知使用者：「這支影片沒有可用字幕，請提供 transcript 檔案，或更換其他有字幕的影片。」
-3. 根據使用者回覆，決定是否中斷任務或手動載入外部 transcript。
+**429 Too Many Requests：** 詳見 `references/fallbacks.md`。腳本已內建 5s/15s 退避重試。
 
 ## 3. 分析順序
 
@@ -147,8 +174,10 @@ v1 預設是 **transcript-first, synthesis-first**：
 ## 6. v1 停損點
 
 以下情況，不要硬進完整文章流程：
-- 沒有任何可用字幕
-- auto captions 噪音高到無法判讀主張
+- 字幕與本地 ASR **都失敗**（腳本回 exit 4 或 ASR 產出 0 segments）
+- ASR 噪音高到無法判讀主張（`quality_badge` 是 🟡 ASR 且文章潤稿時發現大量無法理解段落）
 - 影片本身資訊密度過低
 
-遇到這些情況，交給 `references/fallbacks.md` 決定是降級還是停下。
+⚠️ 「沒有 YT 字幕」**不再**自動觸發停損 — 腳本會降級到 mlx-whisper。但若 `quality_badge` 是 🟡 ASR，frontmatter **必須**標註，且文章開頭請補一行：「本文逐字稿由本地 ASR 轉錄，可能有人名/術語誤辨」。
+
+遇到真停損情況，交給 `references/fallbacks.md` 決定是降級還是停下。
