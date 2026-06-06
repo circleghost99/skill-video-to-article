@@ -174,7 +174,7 @@ quality_badge: ...
 ## 8. YAML Frontmatter（統一 Notion 屬性）
 
 文章頂部的 YAML frontmatter 同時作為：
-1. Notion 上傳的資料來源（`notion_hamster_push.py` 自動解析）
+1. Notion 上傳的 metadata 來源（由 `notion-upload-workflow` 的 canonical CLI 解析）
 2. Obsidian 的元資料
 3. 文章的基本資訊
 
@@ -240,7 +240,7 @@ quality_badge: "🟡 英文自動字幕"
 
 ## 10. 格式禁止項（強制）
 
-下游腳本 `notion_hamster_push.py` 會解析 Markdown 並轉換為 Notion block。
+下游 Notion 發布器會解析 Markdown 並轉換為 Notion block；完整發布規則以 `notion-upload-workflow` 為準。
 以下格式會導致解析錯誤，**文章中嚴禁使用**：
 
 | 禁止項 | 原因 | 替代方案 |
@@ -248,7 +248,7 @@ quality_badge: "🟡 英文自動字幕"
 | `---`（三短線分隔線） | 被 Notion 解析器轉成 divider block，破壞版面 | 用 `## 小節標題` 或空行分隔章節 |
 | HTML tag（`<sup>`, `<a>`, `<span>` 等） | Notion API 不支援 HTML inline | 用 Markdown 語法替代 |
 | 英文破折號 `—`（U+2014）/ `―`（U+2015） | 與發布品質門不一致 | Final Gate 會自動轉成「，」並壓掉重複逗號 |
-| 本地 `file:///` 圖片路徑 | Notion 無法存取本地檔案 | 先上傳圖床或使用 Notion 原生圖片 block |
+| 本地 `file:///` 圖片路徑 | Notion 無法存取本地檔案 | 使用本地絕對路徑或 HTTPS URL，實際上傳交給 `notion-upload-workflow` |
 
 > **注意**：frontmatter 的 `---` 不受此限制，腳本會自動剝離。
 
@@ -266,7 +266,7 @@ quality_badge: "🟡 英文自動字幕"
 
 ### 路徑格式
 - 文章中使用**本地絕對路徑**（如 `/var/folders/.../images/frame_01.jpg`）
-- `notion_hamster_push.py` 會自動偵測本地路徑 → 上傳 Cloudinary → 替換為 CDN URL
+- Notion 發布時由 `notion-upload-workflow` 統一偵測本地圖片、上傳 Cloudinary、替換為 CDN URL；v2a 不複製該流程細節
 - **不需要手動上傳 Cloudinary**
 
 ### 編輯暫存工作區文章的坑點（macOS `/var/folders/...`）

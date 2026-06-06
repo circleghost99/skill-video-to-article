@@ -84,7 +84,7 @@ todo({
 
 7. **禁止輪詢腳本狀態**：`video_analyzer.py` 和 `extract_assets.sh` 跑的時候，**不要**用 `ps aux`、`top`、`ls -la` 反覆查看狀態。這些指令的輸出會灌進 context（上次 `ps aux | grep gemini` 一個指令就吃掉 12,000 tokens）。腳本有 timeout 參數，耐心等它結束即可
 8. **分析結果讀回門檻**：`video_analyzer.py` 完成後，必須讀回 `analysis.json` 的摘要/關鍵幀/metadata 小切片，再進入主題地圖或寫作；不要只依賴 terminal 長 log，因為 upload/polling log 容易被截斷或灌爆 context。詳見 `references/video-analyzer-readback-and-provider-fallback.md`
-9. **禁止手動 Cloudinary 上傳**：Discord 預覽只需發 contact sheet 的路徑或描述。圖片 CDN 上傳由 `notion_hamster_push.py --file` 統一處理，不要在 Step 08 之前手動呼叫 Cloudinary API
+9. **禁止手動 Cloudinary 上傳**：Discord 預覽只需發 contact sheet 的路徑或描述。Notion 發布與圖片 CDN 上傳統一交給 `notion-upload-workflow`，不要在 Step 08 之前手動呼叫 Cloudinary API，也不要在本 Skill 複製 Notion 上傳細節
 
 ### ⚠️ Context Compaction 恢復規則
 
@@ -332,23 +332,10 @@ delegate_task(
      python3 ${HERMES_SKILL_DIR}/scripts/final_gate.py /absolute/path/to/article_draft.md
      ```
    - 只想檢查、不想寫回 normalization 時可加 `--check-only`，但正式發布前必須跑不帶 `--check-only` 的版本。
-5. 依使用者指示發布：
-   ```bash
-   # ✅ Agent-friendly CLI：frontmatter 中的 tags/url/note/cover 會自動讀取
-   # ❌ 不要再手動傳 --tags --url --note --image，那些已在 frontmatter 裡
-   # ⭐ cover_image：YouTube 影片直接用 analysis.json 裡的 youtube_thumbnail_url
-   # ⚠️ 圖片路徑可保持本地路徑；腳本自動上傳 Cloudinary、替換 Notion 內容，並預設寫回 source
-   python3 ~/.hermes/skills/openclaw-imports/circleghost-content-hamster-reporting/scripts/python/notion_hamster_push.py \
-     publish --file article_draft.md --json
-   ```
-   推送成功後會自動生成 `notion_manifest.json`（image→block_id 映射）。
-
-   **修復圖片/更新文章**：用 `--update` 模式重新推送整篇文章：
-   ```bash
-   python3 ~/.hermes/skills/openclaw-imports/circleghost-content-hamster-reporting/scripts/python/notion_hamster_push.py \
-     update --page-id <PAGE_ID> --file article_draft.md --json
-   ```
-
+5. 依使用者指示發布到 Notion 時，**不要在本 Skill 複製 Notion CLI 細節**。先載入 `skill_view(name='notion-upload-workflow')`，並完全依該 Skill 的 canonical flow 執行發布與遠端驗證。本 Skill 只負責交付穩定稿路徑與 v2a 專屬注意事項：
+   - 發布檔案優先使用 Step 08 產出的穩定稿（不是 `/var/folders/...` 暫存稿）
+   - YouTube 來源的 `cover_image` 應使用 `analysis.json.metadata.youtube_thumbnail_url`
+   - 圖片路徑可保持本地絕對路徑或穩定目錄路徑；實際 Cloudinary 上傳、URL 寫回、Notion manifest、遠端檢查以 `notion-upload-workflow` 為準
 6. 複製到 Obsidian：`cp article_draft.md ~/Desktop/同步知識庫/30_Projects/倉鼠特報/發佈區/`
 7. 完成後執行 `bash ${HERMES_SKILL_DIR}/scripts/cleanup_temp_dirs.sh`
 

@@ -6,11 +6,11 @@
 
 ### 交付檢查清單
 
-> 2026-05-02 更新：本文件只補充交付注意事項；實際發布流程以 `SKILL.md` Step 08 為準。
+> 2026-06-06 更新：本文件只補充 v2a 交付前清理注意事項；Notion 發布流程以 `notion-upload-workflow` 為唯一 source of truth，`SKILL.md` Step 08 只做 handoff，不複製 Notion CLI 細節。
 
 - [ ] Review pass 完成（檢查口語殘留、過度壓縮、邏輯斷裂）
 - [ ] Frontmatter 齊備（title / source_url / tags / cover_image / hamster_note；duration / quality_badge 視素材填寫）
-- [ ] 文章圖片使用本地絕對路徑或 HTTPS URL；`notion_hamster_push.py --file` 會自動處理本地圖片上傳 Cloudinary
+- [ ] 文章圖片使用本地絕對路徑或 HTTPS URL；Notion 發布與本地圖片上傳 Cloudinary 交給 `notion-upload-workflow`，不要在 v2a 內手動上傳或複製發布指令
 - [ ] 發布前 Final Gate 已通過：執行 `python3 ${HERMES_SKILL_DIR}/scripts/final_gate.py article_draft.md`，完成 `zhtw` + OpenCC `s2tw` 補漏、U+2014/U+2015 正規化與 `，，` 壓縮，並確認無連續圖片、無 HTML tag、無 em dash、無本文 `---` 分隔線、無中英黏連
 - [ ] 強制中斷點已執行：送交使用者預覽並等待回覆後才發布到 Notion / Discord / Obsidian
 
