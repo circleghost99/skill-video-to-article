@@ -35,6 +35,27 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 # ---------------------------------------------------------------------------
+# Load local .env if exists
+# ---------------------------------------------------------------------------
+def load_env():
+    # Search for .env from CWD, script folder, or project roots
+    for p in [Path.cwd(), Path(__file__).resolve().parent, Path(__file__).resolve().parents[3]]:
+        env_path = p / ".env"
+        if env_path.exists():
+            try:
+                with open(env_path, encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, v = line.split("=", 1)
+                            os.environ[k.strip()] = v.strip().strip('"').strip("'")
+            except Exception:
+                pass
+            break
+
+load_env()
+
+# ---------------------------------------------------------------------------
 # Logging setup
 # ---------------------------------------------------------------------------
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
@@ -72,15 +93,17 @@ ANALYSIS_PROMPT = """\
 1. 【禁止純人物畫面】key_frames 不可收主體是講者/觀眾、沒投影片或實質內容的幀。
    - 即使有 name tag / lower-third，主體是人臉/人體 → 純人物，禁。
    - 投影片佔畫面 ≥70%、講者只在 picture-in-picture → 可以收。
+   - ⚠️ **【嚴格排除大頭特寫】**：只要畫面的主體是講者本人（如講者台上全身照、臉部特寫，或簡報在背景中模糊不可讀），一律禁止收錄。每一幀的擷取必須以「讀者能看清簡報上的資訊」為核心前提。
 
 2. 【只擷取「完成畫面」】多步展開的投影片，挑所有元素已靜止、文字完整、無 motion blur 的最終狀態。
    - 若同一張投影片在不同時間點新增了資訊，挑「最完整」那一幀。
    - 任何 motion blur / 半透明疊加 / 過渡中間態 → 偏移 2-5 秒找清晰幀。
+   - ⚠️ **【關鍵時間戳延遲對齊】**：簡報切換時通常有淡入淡出或動畫特效，請**主動避開轉場瞬間**。回傳的時間戳請「主動往後推延 3~5 秒」，以該頁簡報已經完全靜止定格、文字邊緣最銳利時的秒數為準。
 
 3. 【GIF 嚴格標準】
-   - 只在「動態本身才有意義」時用 GIF：UI 操作、狀態切換、圖表動畫、before/after。
+   - 只在「動態本身才有意義」時用 GIF：UI 操作、狀態切換、图表动画、before/after。
    - 不適合 GIF（用 key_frame 截最終畫面即可）：純投影片切換、講者手勢、長時間打字、頁面緩慢滾動。
-   - **start_time** = 動畫第一個視覺元素已可見且清晰的時刻（**不是**場景切換的黑屏 / talking head）。
+   - **start_time** = 動画第一個視覺元素已可見且清晰的時刻（**不是**場景切換的黑屏 / talking head）。
    - **end_time** = 動畫完全靜止之後（多留 1-2 秒，避免截斷）。
    - 時長 ≤ **12 秒**（腳本硬限制，超過會被截斷）。原始動畫 >12 秒就只挑最精華片段。
 
