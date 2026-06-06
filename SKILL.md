@@ -361,6 +361,7 @@ delegate_task(
 - `references/code-with-claude-series-24-artifact-validation.md` — Code with Claude #24 三件套實例補充：manifest path resolution、strict validator 下 support artifacts 避免 H1、hamster_note 單獨補長、fidelity disclosure。
 - `references/code-with-claude-existing-article-review-09-16.md` — Code with Claude 09–16 既有文章 review 實例：逐篇 deep-reading + terminology artifacts、batch summary 統計、range 續作與 vision/現況邊界注意事項。
 - `references/code-with-claude-existing-article-review-17-24.md` — Code with Claude 17–24 既有文章 review 實例：HeroGen 85% success-rate 分母修正、Spotify retranscript fallback、Microsoft Foundry/Claude Code Routines/Auto mode 術語白話化與 batch summary conventions。
+- `references/skill-repo-collaboration-and-update.md` — 維護本 skill repo 時的 upstream/fork/collaborator 檢查流程：先確認 Hermes 實際載入的本機路徑、canonical remote、fork remote、ahead/behind、PR 是否已合併，以及 dry-run push 的實際 GitHub 權限。
 
 ## 環境需求
 ## 環境需求
