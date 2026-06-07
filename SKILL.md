@@ -1,9 +1,9 @@
 ---
 name: video-to-article
 description: |
-  影片深度解讀 pipeline。從 YouTube 影片或本地影片檔，透過 Gemini 視覺分析、字幕萃取、主題地圖建構、深度解讀寫作，產出圖文並茂的分析文章並推送至 Notion。
-  當使用者說「解讀這個影片」「把這影片整理成文章」「用倉鼠寫文 skill」「分析這支影片」「擷取簡報截圖」「影片轉文章」「v2a」時觸發。
-  不適用於：短摘要、逐字稿、純翻譯、多影片整合。
+  倉鼠影片深度解讀 pipeline。當使用者說「解讀這個影片」「把這影片整理成文章」「用倉鼠寫文 skill」「分析這支影片」「擷取簡報截圖」「影片轉文章」「v2a」時觸發。
+  從 YouTube 或本地影片做 Gemini 視覺分析、字幕萃取、證據截圖 / GIF、主題地圖、深度解讀草稿與 Final Gate，最後停在預覽確認並 handoff 給 notion-upload-workflow。
+  不適用於：短摘要、逐字稿、純翻譯、多影片整合；AI 概念配圖另交給 baoyu-article-illustrator + hamster-image-generation。
 metadata:
   hermes:
     config:
@@ -29,9 +29,16 @@ metadata:
 | 「分析這篇文章的寫作技巧」「學習創作手法」 | ❌ 用 `hamster-writing-craft` |
 | 「執行倉鼠特報」「特報」 | ❌ 用 `circleghost-content-hamster-reporting` |
 
-### 寫作方法論依賴
-Step 07 子代理會自動載入 `hamster-writing-craft` skill 的方法論來優化文章敘事結構。
-主 Agent 不需要手動載入該 skill。
+### Cross-skill contract
+
+- **寫作方法論**：Step 06 初稿與 Step 07 主編審校都載入 `hamster-writing-craft`。Step 06 就要寫出有讀者入口的深度解讀，不可先交摘要味草稿再補救。
+- **影片證據圖**：本 skill 只負責影片 evidence frames / GIF，並用視覺驗證確認截圖不是空框、模糊投影片或無資訊過渡幀。
+- **AI 概念配圖**：若需要每個 H2 的 baoyu 概念資訊圖，handoff 給 `creative/baoyu-article-illustrator` 規劃，再交 `hamster-image-generation` 生圖與 QA。
+- **發布上傳**：Notion / Cloudinary / 遠端圖片驗證交給 `notion-upload-workflow`；本 skill 在 Step 08 預覽確認點停止，不自行重複上傳流程。
+
+### Skill eval seed set
+
+後續要檢查本 pipeline 的觸發準確率與流程遵循率時，使用 `references/eval-prompts.md`。評估時看 transcript，不只看最後文章：todo 是否建立、Step 06/07 是否載入 writing craft、截圖是否視覺驗證、Step 08 是否停在預覽確認。
 
 ---
 
@@ -98,7 +105,7 @@ todo({
 
 ---
 
-## 工作流（9 步）
+## 工作流（9 步 + 可選概念配圖）
 
 | Step | 職責 | 執行者 | 參考文件 | 輸入 | 輸出 |
 |------|------|--------|---------|------|------|
@@ -107,10 +114,25 @@ todo({
 | 03 | 素材擷取 | 腳本 | — | analysis.json + 影片 | `images/` + `manifest.json` |
 | 04 | 字幕獲取清理 | 主Agent | `references/workflow-technical.md`, `references/fallbacks.md` | 影片 URL | `transcript_clean.txt` |
 | 05 | 主題地圖萃取 | 主Agent | — | 字幕 + analysis.json | `notes_theme-map.md` |
-| 06 | 草稿撰寫 | **子代理** | `references/output-format.md` | 主題地圖 + 字幕 | `article_draft.md`（純文字） |
-| 07 | 審校配圖 | **子代理** | `references/output-format.md` | 草稿 + 字幕 + manifest | `article_draft.md`（含圖） |
+| 06 | 草稿撰寫（Writing Craft 初稿） | **子代理** | `references/output-format.md` + `hamster-writing-craft` | 主題地圖 + 字幕 | `article_draft.md`（純文字，已套前言 Gate / 認知階梯 / 碎碎念） |
+| 07 | 審校 + 影片證據圖 placement | **子代理** | `references/output-format.md` + `hamster-writing-craft` | 草稿 + manifest | `article_draft.md`（含 evidence frames / GIF） |
 | 07.5 | 完整性檢查（3-stage hybrid） | **子代理** | `hamster-writing-craft` Step 08 | 草稿 + 字幕 | `fidelity_check.md` + 補後 draft |
-| 08 | 預覽 + Final Gate + 交付 | 主Agent | `references/deployment-cleanup.md`, dry-run 時加讀 `references/skill-reuse-validation.md` | 完成的文章 + fidelity_check | 預覽 / Gate output / Notion 頁面（需使用者確認後） |
+| 07.6 | 可選：文章概念配圖 handoff | 主Agent / 子代理 | `creative/baoyu-article-illustrator` + `hamster-image-generation` | 已審校文章 + H2 list | `illustrations/` + `qa-contact-sheet` + 含 concept figures 的 draft |
+| 08 | 預覽 + Final Gate + 交付 | 主Agent | `references/deployment-cleanup.md`, dry-run 時加讀 `references/skill-reuse-validation.md` | 完成的文章 + fidelity_check | 預覽 / Gate output / 穩定稿路徑；Notion 發布交給 `notion-upload-workflow` |
+
+### Cross-skill handoff：影片證據圖 vs 文章概念圖
+
+`video-to-article` 只負責影片處理與 pipeline orchestration，不把所有配圖責任都攬進本 skill。遇到「深度解讀 + 配圖」任務時，先分清三種資產：
+
+| 資產類型 | 角色 | 負責 skill | 何時使用 |
+|---|---|---|---|
+| `evidence_frames` / GIF | 影片證據圖：證明影片裡真的有這個畫面 | `video-to-article` Step 02–03、Step 07 | 預設使用，尤其是簡報頁、產品畫面、操作流程、原始圖表 |
+| `concept_figures` | 文章概念圖：解釋 H2 論點、框架、對比、流程 | `creative/baoyu-article-illustrator` + `hamster-image-generation` | 使用者要求「幫文章配圖」「每個 H2 配圖」「baoyu 概念資訊圖」或文章需要更豐富圖文節奏 |
+| `cover_image` | 入口封面 | YouTube 來源預設 `analysis.json.metadata.youtube_thumbnail_url`；明確要求才走生圖 | 不要為了每篇 v2a 自動生封面 |
+
+**標準策略：** 文章可以同時有影片截圖 / GIF 與概念資訊圖，但兩者要在 Markdown 中清楚分工：證據圖放在引用影片內容附近，概念圖放在 H2 或關鍵框架段落之後。不要把概念圖當成影片證據，也不要為了補圖而把無意義 talking head 塞進文章。
+
+**Notion handoff：** 本 skill 不複製 Notion / Cloudinary 上傳細節。Step 08 只產出通過 Final Gate 的穩定稿路徑與素材清單；使用者確認發布後，必須載入 `notion-upload-workflow`，由該 skill 執行 preflight / publish / inspect / 遠端驗證。
 
 ---
 
@@ -232,7 +254,7 @@ delegate_task({
 
 > **執行前必讀**：`references/workflow-technical.md` + `references/fallbacks.md`
 
-- 優先用 `youtube-transcript-api` 或 `yt-dlp` 下載字幕
+- 優先用 `youtube-transcript-api` 或 `yt-dlp` 下載字幕；所有字幕抓取都必須套 429-safe policy：語言白名單（禁 `all`）、`--sleep-subtitles 60` / 請求前 sleep、批次切分與快取
 - 去除時間碼，合併破碎短句 → `transcript_clean.txt`
 - 無可用字幕時依 fallbacks 規範處理
 
@@ -253,7 +275,7 @@ delegate_task({
 ```
 delegate_task(
   goal="撰寫 video-to-article 文章草稿（純文字、不嵌圖）",
-  context="工作目錄: {temp_dir}\n\n要讀取的檔案:\n- {temp_dir}/notes_theme-map.md（主題地圖，主結構依據）\n- {temp_dir}/transcript_clean.txt（原始字幕，補細節用）\n- {temp_dir}/analysis.json 的 metadata（影片標題、講者、長度）\n\n寫作規範（先載入再開始工作）:\n1. skill_view(name='video-to-article', file_path='references/output-format.md') — 格式規範與 frontmatter §8\n2. skill_view(name='hamster-writing-craft') — 倉鼠寫作方法論（Opening Hook、認知階梯、數字承載代價、結尾框架、碎碎念默認格式）\n\n任務:\n1. 文章開頭**必須包含 YAML frontmatter**（output-format.md §8 定義的所有必填欄位）\n2. 文章本文從 H2 開始，**不要寫 H1 標題**（Notion Name 屬性已是標題）\n3. 以 notes_theme-map.md 為骨架，按倉鼠寫作方法論擴寫成 Markdown 解讀文\n4. 細節需要回查時，讀 transcript_clean.txt 對應段落（不要把整份 transcript 帶進每個 prompt）\n5. ⚠️ **此步驟先不嵌入圖片**，專注在文字內容的品質和完整度\n6. 遵循 Article-Grade 要求：拒絕過度壓縮，保留 transcript 中的具體數字、原話、人名\n7. 倉鼠碎碎念默認格式：一段 200–300 字口語心得（除非 user 另有要求）\n\n產出:\n- 寫入 {temp_dir}/article_draft.md（純文字版，無圖）\n- 回傳簡短摘要：字數、章節數、frontmatter 欄位列表",
+  context="工作目錄: {temp_dir}\n\n要讀取的檔案:\n- {temp_dir}/notes_theme-map.md（主題地圖，主結構依據）\n- {temp_dir}/transcript_clean.txt（原始字幕，補細節用）\n- {temp_dir}/analysis.json 的 metadata（影片標題、講者、長度）\n\n寫作規範（先載入再開始工作）:\n1. skill_view(name='video-to-article', file_path='references/output-format.md') — 格式規範與 frontmatter §8\n2. skill_view(name='hamster-writing-craft') — 倉鼠寫作方法論。Step 06 的初稿就要完整套用 writing craft，不是先寫普通摘要再晚點修；必須依序通過「讀者進場前言 Gate」、Opening Hook、認知階梯、數字承載代價、結尾框架、碎碎念默認格式\n\n任務:\n1. 文章開頭**必須包含 YAML frontmatter**（output-format.md §8 定義的所有必填欄位）\n2. 文章本文從 H2 開始，**不要寫 H1 標題**（Notion Name 屬性已是標題）\n3. 以 notes_theme-map.md 為骨架，按倉鼠寫作方法論擴寫成 Markdown 解讀文\n4. 細節需要回查時，讀 transcript_clean.txt 對應段落（不要把整份 transcript 帶進每個 prompt）\n5. ⚠️ **此步驟先不嵌入圖片**，專注在文字內容的品質和完整度\n6. 遵循 Article-Grade 要求：拒絕過度壓縮，保留 transcript 中的具體數字、原話、人名\n7. 倉鼠碎碎念默認格式：一段 200–300 字口語心得（除非 user 另有要求）\n\n產出:\n- 寫入 {temp_dir}/article_draft.md（純文字版，無圖）\n- 回傳簡短摘要：字數、章節數、frontmatter 欄位列表",
   toolsets=["terminal", "file", "skills"]
 )
 ```
@@ -270,7 +292,7 @@ delegate_task(
 ```
 delegate_task(
   goal="審校並配圖 video-to-article 文章草稿",
-  context="工作目錄: {temp_dir}\n\n要讀取的檔案:\n- {temp_dir}/article_draft.md（純文字草稿）\n- {temp_dir}/transcript_clean.txt（原始字幕）\n- {temp_dir}/manifest.json（圖片索引，每張圖有 article_context 描述對應段落）\n\n寫作規範（先載入再開始工作）:\n1. skill_view(name='video-to-article', file_path='references/output-format.md') — 格式規範\n2. skill_view(name='hamster-writing-craft') — 倉鼠寫作方法論（Opening Hook、論證框架等）\n\n任務（依序執行）:\n\n【Phase 1 - 內容校對 + 寫作優化】\n1. 讀取 transcript_clean.txt，逐段比對 article_draft.md\n2. 補漏遺漏的：重要論點、數據、具體案例、轉化邏輯\n3. 將遺漏內容融入文章對應段落（不是列清單）\n4. 按 hamster-writing-craft 的寫作方法論優化文章結構和表達\n5. 確認術語翻譯一致性\n\n【Phase 2 - 配圖】\n1. 讀取 manifest.json，根據每張圖的 article_context 插入到文章中對應段落之後\n2. Markdown 圖片格式必須是 ![描述文字](圖片路徑)\n   ✅ 正確：![封閉迴路系統架構圖]({temp_dir}/images/frame_03.jpg)\n   ❌ 錯誤：![{temp_dir}/images/frame_03.jpg]()（路徑放在 alt text 裡是錯的！）\n3. 圖片用本地絕對路徑（如 {temp_dir}/images/frame_01.jpg）\n4. ❌ 禁止把圖片堆在文章最後面（append）——每張圖必須出現在它描述的內容附近\n5. ❌ 禁止連續兩張圖——「連續」的定義是兩張圖之間只有空白行，沒有實質文字。如果兩張圖之間沒有至少一段有意義的中文文字（不算空行），必須合併成一張或在中間加轉場說明\n6. 每篇文章至少 3 張配圖\n7. 每張圖的 alt text 要有描述性（不要寫「圖片」）\n8. ❌ 講者影像數量限制（最重要！）：\\n   - 「講者影像」= 畫面主體是講者本人、沒有投影片/圖表/文字內容的截圖（包括：純臉部特寫、講者坐在桌前說話、講者站在舞台上沒有投影片背景）\\n   - 整篇文章最多只能有 **1 張**講者影像（用於介紹講者段落）\\n   - 如果 manifest 裡有多張講者影像，只選最清晰的 1 張，其餘全部跳過\\n   - 投影片截圖背景裡有講者小窗（picture-in-picture）不算講者影像，可以正常插入\n\n【Phase 3 - 格式檢查 + 自我驗證】\n1. 用 terminal 執行 grep -o '<[^>]*>' article_draft.md 確認無 HTML tag\n2. em dash、U+2015、雙逗號與簡轉繁由 Step 08 主 Agent Final Gate 統一處理；子代理不要自行用 sed/awk 亂改，但若有改文或補圖，仍必須重新跑連續圖片檢查\n3. ⚠️ 必須執行以下自我驗證指令確認沒有連續圖片：\n   python3 -c \"\nwith open('{temp_dir}/article_draft.md') as f:\n    lines = f.readlines()\nimgs = [i for i,l in enumerate(lines) if l.strip().startswith('![')]\nfor j in range(len(imgs)-1):\n    between = lines[imgs[j]+1:imgs[j+1]]\n    if not any(l.strip() and not l.strip().startswith('![') for l in between):\n        print(f'ERROR: 連續圖片 L{imgs[j]+1} & L{imgs[j+1]+1}')\nassert all(any(l.strip() and not l.strip().startswith('![') for l in lines[imgs[j]+1:imgs[j+1]]) for j in range(len(imgs)-1)), '有連續圖片！'\nprint('OK: 無連續圖片')\n\"\n   如果驗證失敗，必須修正後重新驗證\n\n完成後用 terminal 工具寫回 {temp_dir}/article_draft.md。⚠️ 若 {temp_dir} 位於 /var/folders/ 等 macOS temp/sensitive path，禁止使用 patch/write_file 工具（會被拒絕或造成 mutation verifier 誤報）；改用 terminal 執行 Python 腳本原地讀寫，完成後用 read_file/terminal 驗證圖片數與關鍵修改確實存在。",
+  context="工作目錄: {temp_dir}\n\n要讀取的檔案:\n- {temp_dir}/article_draft.md（純文字草稿）\n- {temp_dir}/transcript_clean.txt（原始字幕）\n- {temp_dir}/manifest.json（圖片索引，每張圖有 article_context 描述對應段落）\n\n寫作規範（先載入再開始工作）:\n1. skill_view(name='video-to-article', file_path='references/output-format.md') — 格式規範\n2. skill_view(name='hamster-writing-craft') — 倉鼠寫作方法論（Opening Hook、論證框架等）\n\n任務（依序執行）:\n\n【Phase 1 - 主編審校 + 前言 Gate】\n1. 重新載入 hamster-writing-craft，先檢查前言是否通過「讀者進場前言 Gate」；若只是摘要、空泛稱讚或元敘述開場，必須重寫前言\n2. 檢查文章結構是否符合 Opening Hook、認知階梯、數字承載代價、結尾框架與碎碎念默認格式\n3. 只針對明顯缺漏或不通順處回查 transcript_clean.txt 對應段落；不要在本步驟做完整 transcript fidelity，嚴格忠實度比對交給 Step 07.5\n4. 確認術語翻譯一致性與段落銜接自然\n\n【Phase 2 - 影片證據圖 / GIF placement】\n1. 讀取 manifest.json，根據每張圖的 article_context 插入到文章中對應段落之後\n2. Markdown 圖片格式必須是 ![描述文字](圖片路徑)\n   ✅ 正確：![封閉迴路系統架構圖]({temp_dir}/images/frame_03.jpg)\n   ❌ 錯誤：![{temp_dir}/images/frame_03.jpg]()（路徑放在 alt text 裡是錯的！）\n3. 圖片用本地絕對路徑（如 {temp_dir}/images/frame_01.jpg）\n4. ❌ 禁止把圖片堆在文章最後面（append）——每張圖必須出現在它描述的內容附近\n5. ❌ 禁止連續兩張圖——「連續」的定義是兩張圖之間只有空白行，沒有實質文字。如果兩張圖之間沒有至少一段有意義的中文文字（不算空行），必須合併成一張或在中間加轉場說明\n6. 每篇文章至少 3 張配圖\n7. 每張圖的 alt text 要有描述性（不要寫「圖片」）\n8. ❌ 講者影像數量限制（最重要！）：\\n   - 「講者影像」= 畫面主體是講者本人、沒有投影片/圖表/文字內容的截圖（包括：純臉部特寫、講者坐在桌前說話、講者站在舞台上沒有投影片背景）\\n   - 整篇文章最多只能有 **1 張**講者影像（用於介紹講者段落）\\n   - 如果 manifest 裡有多張講者影像，只選最清晰的 1 張，其餘全部跳過\\n   - 投影片截圖背景裡有講者小窗（picture-in-picture）不算講者影像，可以正常插入\n\n【Phase 3 - 格式檢查 + 自我驗證】\n1. 用 terminal 執行 grep -o '<[^>]*>' article_draft.md 確認無 HTML tag\n2. em dash、U+2015、雙逗號與簡轉繁由 Step 08 主 Agent Final Gate 統一處理；子代理不要自行用 sed/awk 亂改，但若有改文或補圖，仍必須重新跑連續圖片檢查\n3. ⚠️ 必須執行以下自我驗證指令確認沒有連續圖片：\n   python3 -c \"\nwith open('{temp_dir}/article_draft.md') as f:\n    lines = f.readlines()\nimgs = [i for i,l in enumerate(lines) if l.strip().startswith('![')]\nfor j in range(len(imgs)-1):\n    between = lines[imgs[j]+1:imgs[j+1]]\n    if not any(l.strip() and not l.strip().startswith('![') for l in between):\n        print(f'ERROR: 連續圖片 L{imgs[j]+1} & L{imgs[j+1]+1}')\nassert all(any(l.strip() and not l.strip().startswith('![') for l in lines[imgs[j]+1:imgs[j+1]]) for j in range(len(imgs)-1)), '有連續圖片！'\nprint('OK: 無連續圖片')\n\"\n   如果驗證失敗，必須修正後重新驗證\n\n完成後用 terminal 工具寫回 {temp_dir}/article_draft.md。⚠️ 若 {temp_dir} 位於 /var/folders/ 等 macOS temp/sensitive path，禁止使用 patch/write_file 工具（會被拒絕或造成 mutation verifier 誤報）；改用 terminal 執行 Python 腳本原地讀寫，完成後用 read_file/terminal 驗證圖片數與關鍵修改確實存在。",
   toolsets=["terminal", "file", "skills", "vision"]
 )
 ```
@@ -301,7 +323,22 @@ delegate_task(
    - 決定不加 → 跳過
 3. 檢查 fidelity checker 額外註記的「未在 transcript 找到依據」或「僅 analysis/source claim 支撐」的說法。若該 claim 不是影片逐字稿可驗證事實，發布前要改成較保守表述（例如「影片把這件事放在源碼級上下文管理裡拆解」），或明確標成「影片主張」，不要讓未驗證數字變成文章肯定句。
 4. **不需要載入整份 transcript**，所有 fetch 都按行號 on-demand
-5. 進入 Step 08 publish
+5. 進入 Step 07.6（若需要概念配圖）或 Step 08 預覽 / 交付
+
+### Step 07.6: 可選文章概念配圖（baoyu / Codex handoff）
+
+> 只有在使用者要求「文章配圖」「每個 H2 配圖」「幫文章做概念資訊圖」，或主 Agent 判斷文章需要概念圖提升閱讀體驗時執行。影片 evidence frames / GIF 與概念圖可以同篇共存，但必須分工清楚。
+
+執行規則：
+1. 先載入 `skill_view(name='creative/baoyu-article-illustrator')`，用文章 H2 與核心論點建立 `illustrations/outline.md` 與 `illustrations/prompts/*.md`。不要生成泛用科技場景插畫，優先 framework / comparison / flowchart / infographic。
+2. 再載入 `skill_view(name='hamster-image-generation')`，依 Codex-first / contact sheet / OCR / 人眼 sanity review 的圖片 QA gate 生圖與驗圖。
+3. 通過 QA 後，將概念圖插入 H2 或對應框架段落之後；證據圖仍保留在影片內容引用附近。兩種圖不要連續堆疊，中間必須有實質文字銜接。
+4. 產出與回報至少包含：`illustrations/outline.md`、prompt files、生成圖、`qa-contact-sheet`、插回後的 `article_draft.md`。
+5. 若 Codex / vision / OCR QA 失敗，誠實回報並保留文章文字與 evidence frames，不要改用未經使用者同意的 deterministic fallback。
+
+**handoff contract：**
+- 輸入：`article_draft.md`、H2 list、每個 H2 的核心論點、禁止泛用場景插畫。
+- 輸出：`illustrations/outline.md`、`illustrations/prompts/*.md`、`illustrations/*.png`、`qa-contact-sheet`、已插入 concept figures 的文章。
 
 ### Step 08: 預覽 + 交付（🛑 強制中斷點）
 
