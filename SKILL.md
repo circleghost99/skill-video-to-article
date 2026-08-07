@@ -50,6 +50,7 @@ metadata:
 | 「分析這支影片」「擷取簡報截圖」 | 僅執行視覺分析（Step 01–02） |
 | 「只要短摘要 / TL;DR」「只要逐字稿」 | **拒絕** — 非本 skill 核心價值 |
 | 「先寫初稿與配圖方案」「繁中深度解讀初稿 + figure brief」「不用發佈」且已有 transcript | 可走 transcript-led 輕量模式，讀 `references/transcript-led-draft-plus-figure-brief.md`，產出 article / figure brief / fidelity 三個 artifacts；不得假裝已跑視覺分析或已插入真實截圖 |
+| 使用者明確說「這是 podcast／演講／keynote」「不用 v2a 送 Gemini 分析」「不要跑影片視覺分析」，但仍要深度解讀或上傳 Notion | 立刻切換 transcript-led 模式：取消 Step 02–03 的 Gemini 視覺分析、影片截圖與視覺 QA，先抓字幕 / ASR → 主題地圖 → 深度解讀 → fidelity check；不可寫任何畫面 / 截圖 / 投影片 claim。只有使用者另外要求文章配圖時，才 handoff `creative/baoyu-article-illustrator` + `hamster-image-generation`；Notion 發布仍 handoff `notion-upload-workflow`。字幕來源與滾動字幕重複檢查見 `references/transcript-led-speech-and-subtitle-validation.md`。 |
 | 「找出某大會 / 系列演講，逐篇深度解讀，派 sub agent，主 agent QC，配圖」 | 走 conference / event series batch mode，讀 `references/conference-series-batch-deep-reading.md`；建立系列 manifest，批次派子代理寫 article / figure brief / fidelity，主 agent 統一做文字 QC 與圖片 QA，兩個 gate 都過才發布 |
 | 「Review 已完成的大會系列文章 01-08 against transcripts」「produce deep-reading + terminology improvement artifacts」 | 走 existing-article review mode，讀 `references/conference-batch-existing-article-review.md`；不要重寫或發布文章，產出逐篇 review + batch summary，標 P0/P1/P2 與術語白話化建議 |
 
@@ -148,6 +149,17 @@ bash ${HERMES_SKILL_DIR}/scripts/prepare_temp_dir.sh
 
 建立本次 session 專屬暫存目錄，後續所有中繼檔案存於此。
 
+#### Gemini 認證 preflight（執行 Step 02 前）
+
+`video_analyzer.py` 需要目前 subprocess 已匯出 `GEMINI_API_KEY` 或 `GOOGLE_API_KEY`。不要因為 canonical `.env` 裡看得到 key 名稱，就假設 Python subprocess 一定拿得到。
+
+1. 先做**只檢查是否存在、不輸出 secret**的 preflight。
+2. 若目前環境沒有 key，但 canonical Hermes `.env` 有設定，使用能正確解析 dotenv quoting 的方式載入；**不要直接 `source ~/.hermes/.env`**，因為同檔其他含空白路徑的值若未正確引用，可能讓 shell 在載入途中產生無關錯誤。
+3. 認證補齊後，重新執行同一個 analyzer command；成功重試代表 setup 已恢復，不要把第一次缺環境變數記成 provider 故障。
+4. 長影片的 Gemini File API processing + analysis 可能接近或超過單次前景工具的 600 秒上限。這類有明確終點的 bounded job 應使用 background + completion notification；不要用 `ps`、`top` 或目錄輪詢灌入大量 log。
+
+可重用做法與安全檢查範例見 `references/gemini-auth-preflight-and-long-run.md`。
+
 ### Step 02: Gemini 視覺分析（預設必做）
 
 > ⚠️ **本步驟為預設行為，一律執行**。影片截圖是 v2a 的核心產出之一，不是可選項。
@@ -162,7 +174,7 @@ python3 ${HERMES_SKILL_DIR}/scripts/video_analyzer.py "<影片來源>" \
 
 | 參數 | 說明 |
 |------|------|
-| `<影片來源>` | 本地路徑或 YouTube URL |
+| `<影片來源>` | 本地路徑或 YouTube URL。若使用者提供 `https://www.youtube.com/live/VIDEO_ID?...`，先正規化成 `https://www.youtube.com/watch?v=VIDEO_ID`，再傳給 `video_analyzer.py` / `get_transcript.py` / `yt-dlp`，避免 `/live/` URL 在部分路徑被誤判成本地檔案路徑。詳見 `references/youtube-live-url-and-final-gate-normalization-pitfalls.md`。 |
 | `--strip-audio` | **強烈建議**：去除音軌，防止模型被語音干擾視覺判斷 |
 | `--keep-file` | 不刪除 Gemini 上的檔案，回傳 `file_uri` 供追問 |
 | `--model` | 預設 `gemini-2.5-flash` |
@@ -175,11 +187,17 @@ python3 ${HERMES_SKILL_DIR}/scripts/video_analyzer.py "<影片來源>" \
 3. ✅ 寧多勿少 — 每張不同投影片都要抓
 4. ✅ GIF 嚴格標準 — 只有動態才有意義的片段
 
-**⚠️ 429 / 額度超標時：** 影片已下載至 `metadata.local_video_path`，Gemini 檔案 URI 仍有效。等 30-60 秒後用 `--keep-file --model gemini-2.0-flash` 重試（見 `references/fallbacks.md` §7）。
+**⚠️ 429 / 額度超標時：** 影片已下載至 `metadata.local_video_path`，Gemini 檔案 URI 仍有效。先讀實際腳本的 `DEFAULT_MODEL`，不要照舊文件硬指定模型。2026-07-18 的腳本預設為 `gemini-3-flash-preview`；長影片若需重試，優先切成約 60 分鐘段落，分段分析後加回 timestamp offset。完整做法見 `references/gemini3-segmented-visual-retry.md`。
 
 **⚠️ provider/model 404 時：** 若輔助 vision tool 回傳 `model ... is no longer available` / Gemini 404，這不是可 sleep 重試的暫時錯誤。不要反覆呼叫同一 vision tool；改用本步驟的 `video_analyzer.py --model gemini-2.5-flash`、本地 OCR/PIL，或先修 provider 設定。見 `references/video-analyzer-readback-and-provider-fallback.md`。
 
+**⚠️ 整片推理完成但 JSON parse 失敗時：** 若 log 顯示 Gemini `generateContent` 200、tokens/cost 已產生，最後因 `duration_seconds: 104:28` 之類非法 JSON 報 `Expecting ',' delimiter`，不要把它回報成視覺分析不可用，也不要依截斷的 `raw_response_preview` 手補 key frames。對超過約 60 分鐘的影片，直接依 `references/gemini3-segmented-visual-retry.md` 複用本地原片切段重跑；各段 prompt 強制 `video_info.duration_seconds` 使用純整數秒數，只有 `timestamp` 使用 `MM:SS`。成功分段只重跑失敗 part，最後保留 `source_part`、`timestamp_seconds` 與原始高解析影片絕對路徑再合併。
+
 **分析結果 readback（必做）：** `video_analyzer.py` 成功後，用小型 parser/讀檔抽出 `content_summary`、`video_info`、高/中重要度 `key_frames`、`gif_segments`、`metadata.local_video_path`/thumbnail/tokens。後續 Step 03–05 以這份 readback 摘要為依據，不要只靠 terminal log。
+
+**長影片推理成功但 JSON parse 失敗：** 若 Gemini HTTP / token 計費與 analysis 均完成，最後只因 `duration_seconds: 104:28` 這類未加引號時間格式導致 JSON 解析失敗，不要誤判成 provider 故障。保留原始影片，切成約 60 分鐘無音訊段落，prompt 明定 `duration_seconds` 必須是純整數、只有 `timestamp` 可用 `MM:SS`，再分段分析與 offset 合併。完整做法與 accepted-only 二次視覺 QA 見 `references/long-video-json-parse-and-second-pass-visual-qa.md`。
+
+**大影片處理 timeout fallback（可恢復視覺分析）：** 若原始高解析影片上傳成功但 Gemini File API server-side processing 長時間停在 `PROCESSING` 並由腳本 10 分鐘 timeout，不要直接退回純字幕版。先讀 `references/gemini-visual-proxy-analysis.md`，建立 `fps=1,scale=-2:360`、無音訊的 visual proxy 交給 Gemini 分析時間戳，再用原始影片抽取最終高解析截圖。這個 fallback 需要在回報中透明標示「Gemini 看的是降解析 proxy，文章截圖來自原始影片」。
 
 **輸出 JSON 結構：**
 
@@ -220,6 +238,8 @@ bash ${HERMES_SKILL_DIR}/scripts/extract_assets.sh \
 
 **直接時間戳擷取：** 使用 Gemini 回傳的精確時間戳，直接擷取該時刻的幀。Gemini 已經看過影片，不需要額外的啟發式選幀。
 
+**大影片 proxy 注意：** 若 Step 02 使用 `references/gemini-visual-proxy-analysis.md` 的 downsampled visual proxy 完成分析，Step 03 的 `<影片路徑>` 必須改回原始高解析影片，不要用 proxy 抽圖。若 `extract_assets.sh` 因 `frame_aligner.py` 依賴或微對齊失敗而中止，可用 ffmpeg 依 `analysis.json` 的已篩選時間戳直接抽幀，並手寫相容 `manifest.json`，但仍必須做 contact sheet + vision QA。
+
 **輸出：**
 - `images/frame_NN_MM_SS.jpg` — 關鍵截圖
 - `images/gif_NN_MM_SS-MM_SS.gif` — 動態片段（≤12 秒）
@@ -228,7 +248,7 @@ bash ${HERMES_SKILL_DIR}/scripts/extract_assets.sh \
 **封面圖：** YouTube 影片的封面圖已自動寫入 `analysis.json` 的 `metadata.youtube_thumbnail_url`。
 ❌ **不要用 nano-banana-pro 或其他 AI 工具另外生成封面**，直接用 YouTube 縮圖。
 在 frontmatter 的 `cover_image` 填入這個 URL 即可。
-⚠️ **Step 07/子代理常見漂移：** 審校配圖子代理可能會把 `cover_image` 改成文章內某張本地截圖。主 Agent 在 Step 08 穩定化預覽或發布前必須檢查 frontmatter：若來源是 YouTube，`cover_image` 應恢復為 `analysis.json.metadata.youtube_thumbnail_url`，不要讓代表性截圖覆蓋封面縮圖。
+⚠️ **Step 07/子代理常見漂移：** 審校配圖子代理可能會把 `cover_image` 改成文章內某張本地截圖。這是錯誤行為：Step 07 可以插入 evidence frames / GIF 到正文，但**不得修改 YouTube 來源文章的 `cover_image`**。主 Agent 在 Step 08 穩定化預覽或發布前必須檢查 frontmatter：若來源是 YouTube，`cover_image` 應恢復為 `analysis.json.metadata.youtube_thumbnail_url`（或 `https://img.youtube.com/vi/<VIDEO_ID>/maxresdefault.jpg`），不要讓代表性截圖覆蓋封面縮圖。穩定複製到 profile output 後、Final Gate 前也要再檢查一次，因為子代理改過的 frontmatter 會被一起複製。
 
 **影片路徑：** `analysis.json` 的 `metadata.local_video_path` 包含已下載影片的本地路徑。`extract_assets.sh` 應使用此路徑，**不要重新下載影片**。
 
@@ -250,12 +270,17 @@ delegate_task({
 
 子代理完成後，主 Agent 只會收到一段簡短的摘要結果（~200 字），不會佔用主 context。
 
+**主 Agent 最終視覺覆核（不可省略）：** 子代理 QA 通過後，主 Agent仍要親眼檢查最終 contact sheet；對 benchmark、圖表、UI、文字密集投影片，還要逐張開啟完整解析度，確認沒有被 macOS 權限視窗、更新提示、瀏覽器 popover 或游標遮住。Contact sheet 縮圖可能把遮擋藏起來。若需以 ±2 秒候選修復，或文章使用超過四個媒體，依 `references/stable-preview-artifacts.md` 的 dense-slide 與 explicit-xstack 流程重建最終 contact sheet，並確認它精確對應文章實際使用的 frames 與 GIF 首幀。
+
+**Contact sheet 腳本上限：** `scripts/create_contact_sheet.py` 一次最多使用 4 張輸入；超過時雖會輸出成功訊息，實際只取前 4 張並印 warning。大量 evidence frames 不可用 12 張一批後假設全部入圖；應嚴格每批 ≤4 張，或改用 `references/stable-preview-artifacts.md` 的 explicit-xstack 流程，並核對 sheet 數量與 frame 數能完整對應。
+
 ### Step 04: 字幕獲取與清理
 
 > **執行前必讀**：`references/workflow-technical.md` + `references/fallbacks.md`
 
 - 優先用 `youtube-transcript-api` 或 `yt-dlp` 下載字幕；所有字幕抓取都必須套 429-safe policy：語言白名單（禁 `all`）、`--sleep-subtitles 60` / 請求前 sleep、批次切分與快取
 - 去除時間碼，合併破碎短句 → `transcript_clean.txt`
+- 若字幕品質檢查後更換了 source（例如自動字幕有 rolling-caption 三重複句，後來取得人工字幕），不得讓舊、新子代理並行寫同一個 `notes_theme-map.md`。依 `references/transcript-source-swap-and-stale-subagent-writes.md` 使用 versioned canonical transcript、分離輸出路徑、provenance/hash 驗身分，再 promotion；既有草稿必須對 canonical transcript 重跑 fidelity。
 - 無可用字幕時依 fallbacks 規範處理
 
 ### Step 05: 主題地圖萃取
@@ -280,7 +305,14 @@ delegate_task(
 )
 ```
 
-**子代理完成後**，主 Agent **不需要讀 article_draft.md 全文**，只接收摘要即可。後續 Step 07 子代理會自己讀檔。
+**子代理完成後**，先驗證目標 artifact 是否已落地，再判斷是否需要重派：
+
+- `delegate_task` 回傳 `timeout` 不等於工作失敗。先用絕對路徑檢查 `article_draft.md`、`fidelity_check.md` 等預期產物是否存在、非空，並讀取檔案頭部與尾部確認內容完整。
+- 若 artifact 已存在，接管下游流程，不要因 timeout 重做整個步驟；回報時透明標示「子代理逾時，但產物已驗證落地」。
+- 若 artifact 不存在或內容不完整，才重派子代理，並縮小任務範圍。
+- 穩定化複製後，Final Gate 必須使用實際建立的絕對路徑重新執行；影片 ID 或目錄名稱容易有字元誤抄，`file not found` 要先核對路徑，不要把它判成產物遺失。
+
+**子代理完成後**，主 Agent 不需要讀 article_draft.md 全文，直接進入 Step 07 子代理。
 
 ### Step 07: 審校配圖（delegate_task 子代理）
 
@@ -349,6 +381,8 @@ delegate_task(
 - 正式交付：先預覽 → 等待使用者確認 → 根據反饋修正 → 最後一次修改後跑 Final Gate → 使用者明確批准後才發布。
 - Dry-run / 複用性驗證：不發布、不等發布批准；可以產出 contact sheet 與本地文章路徑，但必須在 final response 前跑 Final Gate，並附完整 Gate output。
 
+**發布前公開文案清潔（重要）**：正式發布稿的前言與 frontmatter 不要保留 pipeline 內部狀態，例如「根據完整 YouTube 英文字幕整理」、「額度恢復後補跑 Gemini 視覺分析」、「僅使用非空框、非純人物截圖」或 `quality_badge: Gemini 視覺...`。這些可放在工作回報 / fidelity log，不放給一般讀者。公開前言要回答讀者進場三問，尤其說清楚「這是一部什麼影片」：節目 / 頻道、主角、訪談或報導對象，以及影片核心追問。
+
 **預覽：**
 1. 讀取 `fidelity_check.md`（Step 07.5 子代理輸出）
 2. 對 nice_to_have 列表逐一判斷：必要時 `Read(transcript_clean.txt, offset=<行>, limit=<N>)` 抓對應段落，決定是否補入 article_draft.md
@@ -359,6 +393,8 @@ delegate_task(
 
 **交付：**
 1. 將校對後的 `article_draft.md` 與素材清單提交給使用者
+   - 回報時要明確列出本輪使用過的品質流程：`hamster-writing-craft` 是否用於 Step 06/07、`fidelity_check.md` 是否完成、Final Gate 是否通過。使用者會追問「有沒有用深度解讀撰寫 skill」，不要只交檔案路徑。
+   - 若文章同時含影片 evidence frames / GIF 與 baoyu concept figures，回報要分清楚兩者角色：影片截圖負責「證據」，概念圖負責「理解框架」。不要混稱為同一種配圖。
 2. **在此停下，等待使用者回覆**（同時可附 `fidelity_check.md` 摘要讓 user 知道哪些 nice_to_have 沒採用）
 3. 根據反饋修正
 4. **發布前 Final Gate（主 Agent 必跑，即使 Step 07 子代理已跑過）**：
@@ -382,15 +418,45 @@ delegate_task(
 
 ---
 
+## Session-derived transcript-led publish lessons
+
+- When Gemini visual analysis is blocked but captions are usable, continue as transcript-led / no-screenshot. Before publication, remove internal evidence markers such as `(transcript L...)` from the public article; keep line references only in `fidelity_check.md`.
+- If the user later requests article illustrations, hand off to `creative/baoyu-article-illustrator` for H2 concept planning and `hamster-image-generation` for generation and QA. Concept figures are explanatory visuals, not video evidence.
+- After inserting concept figures, run Final Gate again, then use `notion-upload-workflow`; do not publish the pre-illustration source.
+
+## Long-video degraded visual + ASR recovery pattern
+
+When a long YouTube video hits a provider spending cap during Gemini File API upload, preserve the downloaded `video_source.mp4` and transparently downgrade instead of pretending visual analysis succeeded. Use the reusable recipe in `references/long-video-manual-visual-and-groq-fallback.md`:
+
+1. Record the exact provider error and mark `analysis.json` as a manual visual fallback.
+2. If YouTube captions are disabled and local mlx-whisper is unavailable, extract mono low-bitrate audio, split it into bounded chunks below the transcription upload limit, transcribe each chunk with Groq, and concatenate the outputs. Treat noisy ASR as a discovery aid, not unquestioned fact.
+3. Build coarse contact sheets from the original video at a fixed interval, use vision to identify non-talking-head regions, then extract representative full-resolution frames by timestamp.
+4. Run a second contact-sheet QA on the candidate frames. Remove empty/loading frames, repeated frames, heavily obstructed frames, and frames whose topic cannot be visually supported. Keep only the final manifest entries used by the article.
+5. In the article, distinguish claims supported by the transcript from claims personally verified in the frames. Never turn a vision model's low-resolution guess about tiny text into an exact public fact.
+
+The fallback is still a valid evidence-bearing v2a run when the final manifest and contact-sheet QA are preserved, but the report must disclose the degraded path and its uncertainty.
+
 ## 環境需求
 
 ## References / support files
-
+- `references/stable-preview-artifacts.md` — Stable-copy v2a deliverables from `/var/folders/...` temp workdirs into profile-owned output directories before Discord preview / Notion handoff.
+- `references/sparse-visual-single-frame-and-stable-path-pitfalls.md` — Sparse visual v2a fallback: one verified frame is acceptable, manual ffmpeg manifest fallback, `/private/Users` stable-copy path bug, and post-Final-Gate over-normalization sweep.
+- `references/visual-resume-after-transcript-led-draft.md` — Resume visual analysis after a transcript-led fallback once Gemini quota/billing is fixed: reuse `video_source.mp4`, manually extract assets if `extract_assets.sh` exits early, contact-sheet QA, insert evidence frames into the existing draft, then stable-copy all artifacts.
+- `references/youtube-live-url-and-final-gate-normalization-pitfalls.md` — Session-derived pitfalls: normalize YouTube `/live/VIDEO_ID` URLs to canonical `/watch?v=VIDEO_ID`, sanity-check zhtw/OpenCC over-normalization after Final Gate, and stable-copy transcript-led no-image artifacts.
+- `references/local-video-visual-retry-and-manual-assets.md` — Local-file v2a resume pattern after Gemini quota is raised; includes Python/env selection fix, manual ffmpeg frame/GIF extraction, compatible manifest writing, and >4-image contact sheet QA pitfall.
+- `references/static-slide-minimal-asset-fallback.md` — When Gemini finds only a static title slide and `extract_assets.sh` fails early, use direct ffmpeg extraction + compatible manifest + QA instead of blocking the article or inventing additional frames.
 - `references/video-analyzer-readback-and-provider-fallback.md` — provider/model 404 handling, mandatory `analysis.json` readback, and embedded-X-video writing handoff split.
-- `references/gemini-cap-text-only-fallback.md` — Gemini monthly spending-cap fallback: continue as a transparent transcript-led deep reading when captions are usable, with no images or unverified visual claims.
+- `references/x-embedded-video-v2a.md` — X status with embedded video: convert via baoyu-danger-x-to-markdown, use downloaded MP4 + ASR, separate video evidence from X longform reconstruction, and handle manual asset fallback/stable preview paths.
+- `references/gemini-cap-text-only-fallback.md` — Gemini monthly spending-cap fallback: continue as a transparent transcript-led deep reading when captions are usable, with no evidence frames or unverified visual claims.
+- `references/visual-resume-after-transcript-led-draft.md` — When quota/billing is fixed after a transcript-led fallback, resume visual analysis without rewriting: reuse local `video_source.mp4`, filter assets via contact-sheet QA, insert verified evidence into the existing draft, and stable-copy the image paths.
+- `references/transcript-led-concept-figure-handoff.md` — When Gemini visual analysis is blocked but the user requested article 配圖: keep evidence frames blocked, but allow baoyu / Codex concept figures with contact-sheet QA and clear reporting.
+- `references/transcript-led-local-ai-concept-figures-publish-2026-06-28.md` — Concrete transcript-led v2a session: Gemini spending-cap upload blocker, concept-figure handoff, Codex batch hang salvage, Notion publish verification, and topic-specific OpenCC drift (`本地 AI` → `本機 AI`) scan.
+- `references/local-mp4-transcript-led-asr.md` — Local MP4 fallback: when Gemini visual analysis is blocked and there is no YouTube caption path, extract 16k mono audio, transcribe via Groq with the correct language, normalize ASR product-name errors, and continue as no-image transcript-led v2a.
+- `references/transcript-led-code-with-claude-series-example.md` — Concrete session note for a long podcast run: how to mark visual steps blocked, convert Step 07 into editorial review, preserve transparency, and handle Final Gate after normalization fails on zh-en spacing.
 - `references/transcript-led-code-with-claude-series-example.md` — Concrete session note for a long podcast run: how to mark visual steps blocked, convert Step 07 into editorial review, preserve transparency, and handle Final Gate after normalization fails on zh-en spacing.
 - `references/transcript-led-invalid-visual-qc.md` — Visual extraction/QC fallback when Gemini/extractor produces zero usable assets or mismatched frames: cancel Step 03, continue transcript-led, prohibit visual claims/placeholders, and avoid inventing key frames to satisfy extractor scripts.
 - `references/transcript-led-draft-plus-figure-brief.md` — 輕量模式：已有 transcript、使用者只要繁中深度解讀初稿與配圖方案時，產出 article / figure brief / fidelity 三檔，並明確標示未跑視覺分析與未插入真實截圖。
+- `references/transcript-led-speech-and-subtitle-validation.md` — 演講／keynote 明確免視覺分析時的 transcript-led 分流，以及字幕覆蓋率、人工／自動字幕來源與 rolling-caption 重複驗證。
 - `references/conference-series-batch-deep-reading.md` — 大會 / 活動系列影片批次深度解讀：manifest-first、sub-agent 分批寫作、主 agent text QC + image QA 雙 gate、未通過圖片 QA 時禁止發布。
 - `references/conference-batch-existing-article-review.md` — 已完成大會系列文章的 transcript 對照 review 模式：不重寫不發布，輸出逐篇 deep-reading / terminology review artifact 與 batch summary。
 - `references/conference-batch-text-artifact-gates.md` — 大會批次的 transcript-led 文字包檢查：article / figure brief / fidelity 三件套、概念圖 brief 規格、證據表與 batch validator gates。
@@ -401,6 +467,24 @@ delegate_task(
 - `references/skill-repo-collaboration-and-update.md` — 維護本 skill repo 時的 upstream/fork/collaborator 檢查流程：先確認 Hermes 實際載入的本機路徑、canonical remote、fork remote、ahead/behind、PR 是否已合併，以及 dry-run push 的實際 GitHub 權限。
 
 ## 環境需求
+## Session-derived lessons: split-video Gemini retry and full evidence index (2026-07-19)
+
+### Gemini model selection must follow the actual analyzer script
+
+Before running a retry, inspect `video_analyzer.py`'s `DEFAULT_MODEL` and use the current script default unless there is a documented reason to override it. The current analyzer default is `gemini-3-flash-preview`; older fallback text that hardcodes `gemini-2.5-flash` is stale and must not silently override the script. If a user raises the Gemini spending cap after a 429 upload failure, report the model choice transparently and do not claim that an older fallback is current.
+
+### Long-video visual retry: split, analyze, merge
+
+When a long YouTube video upload hits a project spending cap or processing risk, reuse the already downloaded local `video_source.mp4`. Split it into approximately 60-minute, audio-free parts, analyze each part with the current Gemini Flash model, then merge `key_frames` and `gif_segments` by adding the part offset to every timestamp in the later segment. Preserve `source_part` and `timestamp_seconds` in the merged manifest so every evidence frame remains auditable. Extract final images from the original full-resolution video, not from the reduced analysis proxy or split preview files.
+
+### Evidence-frame QA and exhaustive reference mode
+
+After Gemini returns frames, create a contact sheet and have the main agent perform its own visual QA. Remove pure talking-head, loading, black-player, transition, blurry, obstructed, and near-duplicate frames. If the user explicitly wants every captured screen for UI reference, do not reduce the article to only the editorial highlight set: append a dedicated `## 影片系統畫面索引` section containing every retained Gemini key frame and GIF, each followed by a one-line `圖：...` caption. Captions keep the parser from treating images as continuous blocks and make the index usable as a UI reference appendix.
+
+### Notion handoff after exhaustive media insertion
+
+A large exhaustive index can produce dozens of media blocks. Run `preflight --file ... --json` and verify the local image count before publishing. After publish, use the same page ID for any correction; `images_uploaded: 0` on a later update is expected once Markdown already contains Cloudinary URLs. Always run `inspect` and a Notion blocks readback to verify block count, image-block count, first/last text, and remote terminology.
+
 ## 環境需求
 
 | 類型 | 需求 |

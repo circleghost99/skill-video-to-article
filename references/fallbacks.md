@@ -72,8 +72,8 @@ Fallback 是保護欄，不是主舞台。
 
 當 `yt-dlp` 回應 429 或 423（rate limit / blocked）時：
 
-1. **立即切換到 `youtube-transcript-api`**（首選繞過方案，不需 impersonate）
-2. 只有當 `youtube-transcript-api` 也不可用時，才進入退避重試流程
+1. **立即切換到 429-safe 字幕流程**：語言白名單（不要 `--sub-langs all`）、請求前 sleep 60 秒、批次切分與快取
+2. `youtube-transcript-api` 也可能被字幕端點限流；使用前同樣 sleep/backoff，不要裸呼叫批次 API
 3. **退避重試**：等待 60-120 秒，以指數退避重試，最多 3 次
 4. 仍失敗 → 停下，回報使用者
 
@@ -84,20 +84,28 @@ python3 -m pip install youtube-transcript-api --break-system-packages
 ```
 
 ```python
+import time
 from youtube_transcript_api import YouTubeTranscriptApi
+
+# 429-safe: request a small language whitelist, sleep before subtitle endpoint calls,
+# and retry 429 with backoff instead of tight loops.
+time.sleep(60)
 api = YouTubeTranscriptApi()
 transcript_list = api.list(video_id='VIDEO_ID')
 for t in transcript_list:
-    if t.language_code == 'zh':
+    if t.language_code in {'zh-TW', 'zh-Hant', 'en'}:
+        time.sleep(60)
         segs = t.fetch()
         data = [{'start': s.start, 'duration': s.duration, 'text': s.text} for s in segs]
+        break
 ```
 
 **範例退避 script（yt-dlp fallback）：**
 ```bash
 RETRY=0
 MAX_RETRIES=3
-until yt-dlp --write-subs --write-auto-subs --sub-langs ... "$URL"; do
+until yt-dlp --write-subs --write-auto-subs --sub-langs "zh-TW,en" \
+  --sleep-interval 5 --max-sleep-interval 10 --sleep-subtitles 60 --retries 10 "$URL"; do
   RETRY=$((RETRY + 1))
   if [ $RETRY -ge $MAX_RETRIES ]; then
     echo "[WARN] 429 retry limit, falling back to youtube-transcript-api"
@@ -122,11 +130,12 @@ done
 
 ```bash
 # 等 30-60 秒後，用本地檔案 + --keep-file 重試
-# ⚠️ gemini-2.0-flash 已停用（404 NOT_FOUND: no longer available to new users）
-# 若 2.5-flash 仍 429，說明月度 billing limit 未調高，見下節「仍失敗」處理
+# 先以 video_analyzer.py 實際 DEFAULT_MODEL 為準；2026-07-18 實測為 gemini-3-flash-preview。
+# 長影片優先切成約 60 分鐘段落，各段分析後把後段 timestamp 加回 offset。
+# 只有當實際腳本或 provider 明確要求相容性降級時，才指定其他模型；不要把舊 2.5-flash 命令當默認流程。
 python3 /Users/circleghost/Desktop/開發/SKILL/video-to-article/scripts/video_analyzer.py \
   "/path/to/video_source.mp4" \
-  -o analysis.json --keep-file --model "gemini-2.5-flash"
+  -o analysis.json --keep-file --model "gemini-3-flash-preview"
 ```
 
 ### 為何 `--keep-file` 重要
@@ -175,7 +184,57 @@ PATH="/opt/homebrew/bin:$PATH" python3 /path/to/video_analyzer.py ...
 
 ---
 
-## 8. 標準 caveat 語句
+## 8. Gemini 長影片 processing timeout / 大檔案視覺分析降級
+
+當原始長影片（例如 4K、40 分鐘以上、接近 1GB）已成功上傳 Gemini File API，但 server-side processing 持續 `GET /files/... 200 OK` 最後超過 10 分鐘 timeout，不要把它等同於額度不足，也不要立刻放棄視覺分析。這通常是影片檔太大或編碼/解析度讓 Gemini 處理太慢。
+
+### 已驗證 fallback：製作 visual-only proxy
+
+保留完整時間軸，但降低視覺負載：
+
+```bash
+/opt/homebrew/bin/ffmpeg -y \
+  -i /absolute/path/original.mp4 \
+  -an -vf "fps=1,scale=-2:360" \
+  -c:v libx264 -preset veryfast -crf 32 \
+  video_visual_1fps_360p.mp4
+
+/opt/homebrew/bin/ffprobe -v error \
+  -show_entries format=duration,size \
+  -of default=noprint_wrappers=1 \
+  video_visual_1fps_360p.mp4
+```
+
+然後用 proxy 跑 Gemini：
+
+```bash
+python3 /Users/circleghost/Desktop/開發/SKILL/video-to-article/scripts/video_analyzer.py \
+  video_visual_1fps_360p.mp4 \
+  -o analysis.json --keep-file --model gemini-2.5-flash
+```
+
+實務效果：47 分鐘 4K 影片可被壓成約 20MB、完整保留時間軸，Gemini processing 可從 10 分鐘 timeout 降到約 1 分鐘內完成。注意：proxy 只用於「找高價值時間點與畫面描述」，後續截圖仍要回到原始影片抽 frame，避免低解析圖入稿。
+
+### `extract_assets.sh` / frame_aligner 手動抽圖 fallback
+
+若 `extract_assets.sh` 在第一張 frame 直接退出，或 terminal 只停在類似 `--- Key Frames: N ---` / `[1/N] 00:43 — ...` 就 exit 1、沒有更多錯誤訊息，通常是 `frame_aligner.py` 內部失敗但 stderr 被腳本重導到 `/dev/null`。不要把素材流程卡死，也不要重跑整支影片分析。
+
+處理方式：
+1. 先確認 `analysis.json` 已成功且 `metadata.local_video_path` / `video_source.mp4` 存在。
+2. 用 Gemini 回傳的 timestamp 從原始影片直接抽高解析圖：`ffmpeg -y -ss <秒數> -i video_source.mp4 -vframes 1 -q:v 2 -update 1 outputs/images/frame_NN_MM_SS.jpg -loglevel error`。
+3. GIF 直接用同一段 `ffmpeg -ss <start> -t <duration> -i video_source.mp4 -filter_complex "[0:v] fps=12,scale=1080:-1:flags=lanczos,tpad=stop_mode=clone:stop_duration=1.5,split [a][b];[a] palettegen=max_colors=256 [p];[b][p] paletteuse=dither=floyd_steinberg" outputs/images/gif_NN_START-END.gif`。
+4. 手寫相容 manifest，至少同時放在工作目錄根的 `manifest.json` 與 `outputs/images/manifest.json`，每個 asset 保留 `file/type/timestamp(or start_time/end_time)/description/importance/article_context`，讓 Step 07 子代理可正常配圖。
+5. 之後仍必須做 contact sheet / vision QA，確認不是黑屏、空框、純人物或不可讀圖，再入稿。
+
+若確認是環境依賴（例如 `opencv-python is not installed`），可另外修依賴；但當前文章流程應優先用手動 ffmpeg fallback 保住素材產出。
+
+### 入稿注意：不要把圖片插進 YAML frontmatter
+
+自動插圖時，搜尋 anchor 不能只用會出現在 `hamster_note` 的短句（例如「從不信任開始是理性的」）。先限定搜尋正文區域（frontmatter 第二個 `---` 之後），或用完整正文段落 anchor；否則圖片 Markdown 可能被插進 frontmatter，導致 preflight 解析不到 title/note/source。
+
+---
+
+## 9. 標準 caveat 語句
 
 ### Auto captions 清理後使用
 `註：本文主要根據 YouTube 自動字幕整理，已做語句清理，但少數術語仍可能與原片略有出入。`

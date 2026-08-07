@@ -2,9 +2,9 @@
 """get_transcript.py — Single-entry transcript fetcher with priority chain.
 
 Priority order (each step only runs if the previous yielded nothing):
-  1. youtube-transcript-api  — fastest, no rate-limit risk
+  1. youtube-transcript-api  — 429-safe language whitelist + sleep/backoff
   2. yt-dlp --write-subs --write-auto-subs  — covers cases the API misses,
-                                              with 429 backoff
+                                              with subtitle sleeps + 429 backoff
   3. mlx-whisper large-v3  — local ASR fallback, only when YT has no subs
                              at all (requires --audio)
 
@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import random
 import re
 import shutil
 import subprocess
@@ -39,9 +41,26 @@ LANG_PREFS: dict[str, list[str]] = {
 
 # Comma-separated --sub-langs argument for yt-dlp.
 YTDLP_LANG_CODES: dict[str, str] = {
-    "zh": "zh-Hant,zh-TW,zh-Hans,zh-CN,zh,zh-HK,zh-Hant-zh,zh-Hans-zh,en",
-    "en": "en,en-US,en-GB,en-zh",
+    "zh": "zh-TW,zh-Hant,en",
+    "en": "en,en-US,en-GB",
 }
+
+SUBTITLE_SLEEP_SECONDS = float(os.environ.get("YT_SUBTITLE_SLEEP_BEFORE", "60"))
+SUBTITLE_MAX_ATTEMPTS = int(os.environ.get("YT_SUBTITLE_MAX_ATTEMPTS", "3"))
+
+
+def _is_429(text: str) -> bool:
+    text = text.lower()
+    return "429" in text or "too many requests" in text
+
+
+def _sleep_before_subtitle_request(label: str, attempt: int = 1) -> None:
+    if SUBTITLE_SLEEP_SECONDS <= 0:
+        return
+    wait = SUBTITLE_SLEEP_SECONDS if attempt <= 1 else SUBTITLE_SLEEP_SECONDS * (2 ** (attempt - 1))
+    wait += random.uniform(0, min(5.0, max(0.0, wait / 5)))
+    print(f"→ waiting {wait:.1f}s before YouTube subtitle request ({label}, attempt {attempt})", file=sys.stderr)
+    time.sleep(wait)
 
 
 def extract_video_id(url: str) -> str:
@@ -66,12 +85,21 @@ def try_youtube_transcript_api(video_id: str, lang: str) -> dict:
         return {"ok": False, "reason": "youtube-transcript-api not installed"}
 
     pref_codes = LANG_PREFS.get(lang, [lang])
+    api = YouTubeTranscriptApi()
 
-    try:
-        api = YouTubeTranscriptApi()
-        transcript_list = api.list(video_id)
-    except Exception as e:
-        return {"ok": False, "reason": f"list failed: {type(e).__name__}: {e}"}
+    transcript_list = None
+    for attempt in range(1, SUBTITLE_MAX_ATTEMPTS + 1):
+        try:
+            _sleep_before_subtitle_request("youtube-transcript-api list", attempt)
+            transcript_list = api.list(video_id)
+            break
+        except Exception as e:
+            reason = f"list failed: {type(e).__name__}: {e}"
+            if not _is_429(reason) or attempt >= SUBTITLE_MAX_ATTEMPTS:
+                return {"ok": False, "reason": reason}
+
+    if transcript_list is None:
+        return {"ok": False, "reason": "list failed without transcript list"}
 
     candidates = list(transcript_list)
     if not candidates:
@@ -88,10 +116,19 @@ def try_youtube_transcript_api(video_id: str, lang: str) -> dict:
     candidates.sort(key=rank)
     chosen = candidates[0]
 
-    try:
-        fetched = chosen.fetch()
-    except Exception as e:
-        return {"ok": False, "reason": f"fetch failed: {type(e).__name__}: {e}"}
+    fetched = None
+    for attempt in range(1, SUBTITLE_MAX_ATTEMPTS + 1):
+        try:
+            _sleep_before_subtitle_request("youtube-transcript-api fetch", attempt)
+            fetched = chosen.fetch()
+            break
+        except Exception as e:
+            reason = f"fetch failed: {type(e).__name__}: {e}"
+            if not _is_429(reason) or attempt >= SUBTITLE_MAX_ATTEMPTS:
+                return {"ok": False, "reason": reason}
+
+    if fetched is None:
+        return {"ok": False, "reason": "fetch failed without transcript"}
 
     segments = [
         {"start": float(s.start), "duration": float(s.duration), "text": s.text}
@@ -117,7 +154,7 @@ def _run_yt_dlp(url: str, out_dir: Path, sub_langs: str, auto: bool) -> dict:
         flags.append("--write-auto-subs")
 
     last_err = ""
-    for delay in (0, 5, 15):
+    for delay in (0, 60, 120):
         if delay:
             time.sleep(delay)
         try:
@@ -129,6 +166,14 @@ def _run_yt_dlp(url: str, out_dir: Path, sub_langs: str, auto: bool) -> dict:
                     sub_langs,
                     "--sub-format",
                     "vtt",
+                    "--sleep-interval",
+                    "5",
+                    "--max-sleep-interval",
+                    "10",
+                    "--sleep-subtitles",
+                    "60",
+                    "--retries",
+                    "10",
                     "--skip-download",
                     "-o",
                     str(pattern),
@@ -137,7 +182,7 @@ def _run_yt_dlp(url: str, out_dir: Path, sub_langs: str, auto: bool) -> dict:
                 check=True,
                 capture_output=True,
                 text=True,
-                timeout=120,
+                timeout=300,
             )
             vtts = sorted(out_dir.glob(glob_pattern))
             return {"ok": True, "vtts": vtts}

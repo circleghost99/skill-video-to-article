@@ -237,6 +237,7 @@ quality_badge: "🟡 英文自動字幕"
 6. 有沒有做整篇簡轉繁？發布前必須跑 `scripts/final_gate.py`；它會用 `zhtw`（https://github.com/rajatim/zhtw）跑全文轉換，再用 OpenCC `s2tw` 補 `zhtw` 漏字，不靠有限簡體字清單人工比對；同時會將 U+2014/U+2015 轉全形逗號並壓掉 `，，`。
 7. 有沒有不該保留的英文？專有名詞與引用原句可以保留；若不是引用，人工審稿時再判斷是否翻成中文。英文片語前後需有空格，避免 `中的High-level` 這類中英黏連。
 8. 有沒有連續圖片？兩張圖片之間必須至少有一段有意義的中文文字；如果只是空白行，必須調整位置、合併圖片，或補上轉場段落。
+9. **Transcript-led / no-screenshot 審校**：若使用者明確說「不插影片截圖」，交付前必須確認正文沒有 Markdown 圖片、`frame_` / `gif_` / `screenshot` placeholder、以及「畫面顯示 / 如圖 / 截圖 / 投影片上 / 簡報上」等未驗證視覺 claim。這種模式仍要補足來源背景與讀者入口，但公開稿不要寫「本文主要根據 YouTube 英文自動字幕整理」「字幕可能有誤」等 pipeline disclaimer；這些只放工作回報。
 
 ## 10. 格式禁止項（強制）
 
@@ -260,6 +261,20 @@ quality_badge: "🟡 英文自動字幕"
 - `manifest.json` 中已經過 Gemini 去重，同一內容不會同時有 frame 和 GIF
 - 寫稿時直接按 manifest 嵌入即可，不要自行補加重複的截圖或 GIF
 
+### 大量已驗證證據圖的主編配置
+
+當使用者要求把一批已完成視覺 QA 的影片證據圖配置進長文時，`manifest.json` 是唯一圖片白名單；不要從 rejected 目錄、舊 contact sheet 或原始抽幀集合補圖。配置與驗證採以下順序：
+
+1. **先做文章級審校，再配圖**：確認前言有讀者入口、H2 是認知階梯、具體數字與證據邊界仍在，並掃除高頻公式句。圖片不能用來掩飾段落本身缺乏論證。
+2. **建立「段落 → frame」語意映射**：每張圖必須對應前一段的公式、流程、數字、案例或限制。不要只按影片時間碼平均撒圖，也不要把相關但未被正文討論的投影片硬塞進去。
+3. **每張圖置於完整論證段落之後**：H2 下先有至少一段正文，再放圖片；圖片下一個非空行必須是單行 `圖：...`。兩張圖片之間至少保留一段有意義的中文正文。
+4. **圖說承擔證據邊界**：圖說要說清楚畫面證明什麼；若課程只快速點名、圖表只顯示相關性、或投影片不足以支持因果與效能數字，圖說或正文必須明確限縮，不可把視覺線索寫成已證實結論。
+5. **正文缺少必要入口時可窄幅補寫**：只有當 frame 已驗證且 transcript / 原始素材確實支援時，才補一小段白話機制與限制，讓圖片有自然落點。若素材只顯示章節標題、動畫中間狀態或未展開內容，寧可不入稿並記錄理由。
+6. **產出 `qa/image_placement_report.md`**：逐張列出 frame、時間碼、是否入稿、所在 H2、未入稿理由；並驗證圖片數不超過 manifest accepted 數、路徑存在、無重複、caption 數一致、無連續圖片、每個含圖 H2 首圖前有論證段落。
+7. **最後做格式與文風雙重掃描**：除了 HTML tag、em dash、body divider、中英黏連，也要按任務要求精確統計 `不是`、`而是`、`不只是`、`更是`、`真正重要的`、`表面上`、`本質上` 等公式化對照詞；不能只靠人工閱讀。
+
+若 accepted 圖全部都有高品質正文落點，可以全數入稿；不要為了追求「精簡」任意丟棄已驗證且有證據價值的圖。反之，manifest 是可用上限，不是強迫全塞的配額，沒有安全落點的圖片要在報告中透明說明。
+
 ### 存放位置
 - 截圖/GIF 由 `extract_assets.sh` 產出在工作目錄的 `images/` 子目錄
 - **不要**把圖片放在 Skill 目錄內
@@ -271,8 +286,10 @@ quality_badge: "🟡 英文自動字幕"
 
 ### 編輯暫存工作區文章的坑點（macOS `/var/folders/...`）
 - video-to-article 工作區常在 macOS `/var/folders/.../T/openclaw-video-to-article/...` 下；某些檔案編輯工具可能會把這類 temp path 判成 sensitive system path 而拒絕 patch。
-- 遇到這種情況，不要放棄配圖或審校，也不要改到 skill 目錄；改用 `terminal` 執行短 Python 腳本原地讀寫 `article_draft.md`（`Path(...).read_text()` → 精準 `replace` → `write_text()`）。
-- 寫回後必須立即驗證：圖片本地路徑存在、沒有連續圖片、沒有 HTML tag、沒有 em dash，並抽查 ASR 誤辨人名/產品名是否殘留。
+- 遇到這種情況，不要放棄配圖或審校，也不要改到 skill 目錄；短修改可用 `terminal` 執行 Python 原地讀寫 `article_draft.md`（`Path(...).read_text()` → 精準 `replace` → `write_text()`）。
+- **長篇初稿／大幅重寫 fallback**：若直接把數萬字內容塞進 terminal 命令不穩定，先用允許寫入的普通工作區建立 staging Markdown，再用短 Python 指令 `destination.write_text(staging.read_text(encoding='utf-8'), encoding='utf-8')` 複製到 `/var/folders/.../article_draft.md`。完成 readback 與統計驗證後刪除 staging，避免工作區殘留第二份稿件。這是寫入路徑 fallback，不代表 temp 工作區不可用。
+- 如果 Python heredoc 內含中文字串，腳本第一或第二行加上 `# -*- coding: utf-8 -*-`；否則在某些 macOS / locale 組合下會遇到 `SyntaxError: Non-UTF-8 code ... but no encoding declared`。
+- 寫回後必須立即驗證：圖片本地路徑存在、沒有連續圖片、沒有 HTML tag、沒有 em dash，並抽查 ASR 誤辨人名/產品名是否殘留。若任務要求特定繁中字數，先剝除 frontmatter，分別回報 CJK 漢字數與正文總字元數，不能拿後者代替前者。
 
 ### 命名規則
 - 格式：`frame_NN_MM_SS.jpg`（截圖）、`gif_NN_MM_SS-MM_SS.gif`（GIF）

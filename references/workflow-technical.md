@@ -42,7 +42,7 @@ v1 先支援：
 - duration
 - available subtitles / captions
 
-可用 `yt-dlp --list-subs <url>` 檢查。
+可用 `yt-dlp --skip-download --list-subs --sleep-interval 5 --max-sleep-interval 10 --sleep-subtitles 60 <url>` 檢查。
 
 ### Step 2 — 優先順序
 字幕優先順序：
@@ -68,8 +68,8 @@ v1 先支援：
 ```
 
 腳本內部優先順序（YT 字幕為主，本地 ASR 為輔）：
-1. **`youtube-transcript-api`** — 先抓人工字幕，無則退到 auto-caption
-2. **`yt-dlp --write-subs --write-auto-subs`** — 第一次只抓人工，沒有再抓 auto；含 429 退避（5s, 15s）
+1. **`youtube-transcript-api`** — 先抓人工字幕，無則退到 auto-caption；仍需語言白名單、請求前 sleep 60 秒與 429 backoff
+2. **`yt-dlp --write-subs --write-auto-subs`** — 第一次只抓人工，沒有再抓 auto；含 `--sleep-subtitles 60`、5-10 秒一般 sleep 與 429 退避（60s, 120s）
 3. **`mlx-whisper large-v3` 本地轉錄** — 僅當 1+2 都拿不到任何字幕時才啟動，需傳 `--audio`
 
 **腳本輸出：**
@@ -94,6 +94,25 @@ v1 先支援：
 
 `quality_badge` **必須寫進文章 frontmatter** 給讀者透明度（特別是 fallback 到 whisper 時）。
 
+### Step 3.5 — transcript 覆蓋度驗證（必做）
+
+`get_transcript.py` 回傳 `ok: true` 不代表字幕一定覆蓋完整影片。YouTube / transcript API 有時只抓到前半段，例如 47 分鐘影片只取得到約 23:30，但 stdout 仍顯示成功。進入主題地圖前必須比對：
+
+1. 從 `metadata.json` / `yt-dlp --dump-json` 取得影片總長度（`duration` 或 `duration_string`）。
+2. 檢查 `transcript_clean.txt` 最後一個時間戳，若少於影片總長的約 80–90%，視為 **partial transcript**，不得直接寫完整解讀。
+3. 對 partial transcript，優先用 `yt-dlp` 下載原始字幕 `en-orig` / `en` 的 `json3`，再轉成新的 `transcript_clean.txt`：
+
+```bash
+mkdir -p subs
+/opt/homebrew/bin/yt-dlp --skip-download \
+  --write-subs --write-auto-subs \
+  --sub-langs "en-orig,en" --sub-format json3 \
+  --sleep-interval 5 --max-sleep-interval 10 --sleep-subtitles 60 \
+  -o "subs/%(id)s.%(ext)s" "$URL"
+```
+
+轉換 json3 時用 Python 直接讀檔，不要用 `cat | python` pipe。輸出後再次確認 chunk 數與最後時間戳接近影片長度。若完整字幕取得成功，必須重新建立 `notes_theme-map.md`，不能沿用 partial transcript 產生的主題地圖。
+
 **flag 行為：**
 - `--skip-whisper`：完全禁用 ASR fallback（僅當你明確要求字幕版本，不接受 ASR 結果時用）
 - `--lang en`：英文影片改用此 flag
@@ -113,20 +132,24 @@ v1 先支援：
 
 `youtube-transcript-api`（v1.x 正確用法）：
 ```python
+import time
 from youtube_transcript_api import YouTubeTranscriptApi
+
+time.sleep(60)  # 429-safe: do not batch-call the subtitle endpoint tightly
 api = YouTubeTranscriptApi()
 transcript_list = api.list(video_id='VIDEO_ID')  # ⚠️ 不是 fetch()
 for t in transcript_list:
     print(t.language_code, t.is_generated)
-chosen = sorted(transcript_list, key=lambda t: (t.is_generated, t.language_code != 'zh-TW'))[0]
+chosen = sorted(transcript_list, key=lambda t: (t.is_generated, t.language_code not in {'zh-TW', 'zh-Hant', 'en'}))[0]
+time.sleep(60)
 fetched = chosen.fetch()  # iterable of FetchedTranscriptSnippet (text, start, duration)
 ```
 
 ⚠️ **常見錯誤**：把 `YouTubeTranscriptApi.fetch(...)` 當 class method 呼叫會失敗。**必須先 `api = YouTubeTranscriptApi()` instance 再 `api.list()`**。
 
-`yt-dlp` 字幕語言代碼可能很怪（`zh-Hans-zh` = 簡體 from 中文 auto-caption）。先 `yt-dlp --list-subs "$URL"` 看清楚再決定 `--sub-langs`。
+`yt-dlp` 字幕語言代碼可能很怪（`zh-Hans-zh` = 簡體 from 中文 auto-caption）。先 `yt-dlp --skip-download --list-subs --sleep-interval 5 --max-sleep-interval 10 --sleep-subtitles 60 "$URL"` 看清楚再決定 `--sub-langs`，不要用 `all`。
 
-**429 Too Many Requests：** 詳見 `references/fallbacks.md`。腳本已內建 5s/15s 退避重試。
+**429 Too Many Requests：** 詳見 `references/fallbacks.md`。腳本已內建 60s/120s 退避重試與字幕 sleep。
 
 ## 3. 分析順序
 
