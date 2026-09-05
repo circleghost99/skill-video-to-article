@@ -117,7 +117,7 @@ todo({
 | 05 | 主題地圖萃取 | 主Agent | — | 字幕 + analysis.json | `notes_theme-map.md` |
 | 06 | 草稿撰寫（Writing Craft 初稿） | **子代理** | `references/output-format.md` + `hamster-writing-craft` | 主題地圖 + 字幕 | `article_draft.md`（純文字，已套前言 Gate / 認知階梯 / 碎碎念） |
 | 07 | 審校 + 影片證據圖 placement | **子代理** | `references/output-format.md` + `hamster-writing-craft` | 草稿 + manifest | `article_draft.md`（含 evidence frames / GIF） |
-| 07.5 | 完整性檢查（3-stage hybrid） | **子代理** | `hamster-writing-craft` Step 08 | 草稿 + 字幕 | `fidelity_check.md` + 補後 draft |
+| 07.5 | 完整性檢查（3-stage hybrid） | **子代理** | `hamster-writing-craft`「寫作後檢查」+ `references/core/step08-fidelity-schema.md` | 草稿 + 字幕 | `fidelity_check.md` + 補後 draft |
 | 07.6 | 可選：文章概念配圖 handoff | 主Agent / 子代理 | `creative/baoyu-article-illustrator` + `hamster-image-generation` | 已審校文章 + H2 list | `illustrations/` + `qa-contact-sheet` + 含 concept figures 的 draft |
 | 08 | 預覽 + Final Gate + 交付 | 主Agent | `references/deployment-cleanup.md`, dry-run 時加讀 `references/skill-reuse-validation.md` | 完成的文章 + fidelity_check | 預覽 / Gate output / 穩定稿路徑；Notion 發布交給 `notion-upload-workflow` |
 
