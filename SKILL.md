@@ -15,6 +15,16 @@ metadata:
 
 # Video to Article
 
+## Frame.io 系列批次處理的狀態與證據鏈
+
+多支影片必須以 `series_manifest.json` 作為單一進度索引，逐支記錄 asset/source URL、下載路徑、字幕、evidence、文章、fidelity、Drive file ID/私密權限、Notion page ID/readback 與清理狀態。不要以子代理回報或背景程序完成訊息代替檔案存在、權限讀回與遠端頁面驗證。
+
+每支影片的順序固定為：下載完成後 `ffprobe` → 抽音轉錄 → 固定時間點抽幀 → contact sheet 視覺 QA → 寫文章與 fidelity → `preflight` → Notion publish/update → page readback → Drive permission readback。YouTube 若未能取得真實私密上傳 ID 與可讀回的 privacy 狀態，必須標記 pending/blocked，不能自行宣稱完成；但若使用者明確確認暫不等待 YouTube，則依當輪清理決策，以 Google Drive 唯一 owner 權限讀回＋Notion 遠端 full readback 作為刪除本機影片的 Gate。
+
+Contact sheet 建議在沒有專用生成腳本時使用 ffmpeg 的 2×2 `hstack`/`vstack`；但在文章中只能描述 vision 已親眼確認的畫面。小字、個資與模糊欄位要限縮成可驗證的類型，不可從字幕或縮圖補猜。
+
+
+
 影片深度解讀 pipeline：**Gemini 視覺分析 → 智慧截圖 → 主題萃取 → 解讀寫作**，產出圖文並茂的分析文章。
 
 ---
@@ -41,6 +51,20 @@ metadata:
 後續要檢查本 pipeline 的觸發準確率與流程遵循率時，使用 `references/eval-prompts.md`。評估時看 transcript，不只看最後文章：todo 是否建立、Step 06/07 是否載入 writing craft、截圖是否視覺驗證、Step 08 是否停在預覽確認。
 
 ---
+
+## Frame.io 多影片系列處理（2026-08-13）
+
+當來源是 Frame.io 分享頁且包含多層資料夾與多支影片時，先做系列盤點，再逐支執行，不要把分享頁 URL 當成單一影片來源。使用 authenticated Chrome 的 `opencli browser` bridge 逐層瀏覽實際頁面，建立 `series_manifest.json`，每筆至少保存 `asset_id`、標題、原始檔名、時長、父資料夾、root 資料夾、已驗證 asset URL 與處理狀態。不要猜測 GraphQL、下載 URL 或影片數量，以瀏覽器看到的 asset card 和實際 Download 行為為 source of truth。
+
+每支影片固定順序：
+1. 開啟該 asset page，確認標題與 asset ID。
+2. 點擊 Download 選單，優先選 `Original`；原檔失敗時才記錄並選明確標示的 proxy。
+3. 用 `browser wait download` 或輪詢 Downloads 目錄，等待 `.crdownload` 消失後，才把檔案標成下載完成；不得把暫存下載檔當成影片成品。
+4. 立刻用 `ffprobe` 驗證時長與大小，並同步私密備份到指定雲端資料夾。
+5. 保存字幕、抽幀與視覺 QA、文章、Notion 遠端讀回結果，再進下一支。
+6. YouTube 等獨立發布目標若被檔案上傳權限阻擋，記錄實際錯誤與 pending 狀態，不得阻塞字幕、文章與 Notion 主流程，也不得謊報私密上傳完成。
+
+Frame.io share pages can show the public folder tree while a direct deep asset URL renders an unauthenticated shell with a Login control and no asset card. Treat that state as a route/session problem, not a missing video: return to the canonical share root, traverse the parent folders, refresh DOM refs, and open the asset from its visible card. The card's semantic `Download Asset` control is more reliable than stale numeric refs or a guessed deep URL. If the Download menu appears, choose the method explicitly (`Download in Browser` for browser delivery, or a named proxy).
 
 ## 觸發條件
 
@@ -120,6 +144,12 @@ todo({
 | 07.5 | 完整性檢查（3-stage hybrid） | **子代理** | `hamster-writing-craft`「寫作後檢查」+ `references/core/step08-fidelity-schema.md` | 草稿 + 字幕 | `fidelity_check.md` + 補後 draft |
 | 07.6 | 可選：文章概念配圖 handoff | 主Agent / 子代理 | `creative/baoyu-article-illustrator` + `hamster-image-generation` | 已審校文章 + H2 list | `illustrations/` + `qa-contact-sheet` + 含 concept figures 的 draft |
 | 08 | 預覽 + Final Gate + 交付 | 主Agent | `references/deployment-cleanup.md`, dry-run 時加讀 `references/skill-reuse-validation.md` | 完成的文章 + fidelity_check | 預覽 / Gate output / 穩定稿路徑；Notion 發布交給 `notion-upload-workflow` |
+
+### Tool-comparison video research
+
+當影片比較 Codex、Claude Code、AI coding agent 或其他開發工具，且包含實際建置、成本、速度、測試或代理數量時，讀取 `references/tool-comparison-video-research.md`。這類影片必須分開記錄：畫面親眼驗證的產品/測試結果、字幕或講者口述的數據、以及外部官方文件對工具定位的描述。單次實驗只能寫成案例研究，不能直接升級為普遍排名。
+
+寫作時先拆出實驗控制條件：模型與 harness、prompt 是否有規劃和停止條件、執行時間、token/成本預算、平行代理策略、工具呼叫上限、驗收標準。若講者的成本或時間數字前後不一致，保留不一致並使用約略表述，不能挑一個看起來最乾淨的數字當成確定 benchmark。比較「強項」時應按任務形狀分流：模糊產品探索看產品判斷、範圍取捨和 UX；明確規格下的實作看架構、測試、可靠性和安全；最後給出可組合的雙 Agent 工作流，而不是全域性的勝負判決。
 
 ### Cross-skill handoff：影片證據圖 vs 文章概念圖
 
@@ -418,11 +448,79 @@ delegate_task(
 
 ---
 
+## Manual asset extraction and timestamp-QA fallback
+
+When `extract_assets.sh` stops after the first key frame, do not treat the whole visual track as unavailable and do not invent a successful manifest. First inspect the working directory and the analysis metadata. The analyzer may report a temporary source path that has already been cleaned up; if the run directory contains `video_source.mp4`, use that preserved absolute path as the extraction input.
+
+If the extractor still fails, use the accepted timestamps from `analysis.json` with direct `ffmpeg` extraction, write a compatible `manifest.json`, and record the run as a manual fallback. Never blindly retain every extracted frame: create a contact sheet, run visual QA, remove pure talking-head / cropped / transition frames, and retry rejected timestamps with candidates at -2s, -1s, +1s, +2s. The accepted manifest is the only image whitelist for later article placement. If an accepted timestamp yields no usable candidate, remove it from the manifest rather than forcing the planned image count.
+
+The main agent must perform a final contact-sheet visual check after any delegated QA. A frame that matches the transcript description but is visually a talking head is not evidence. Preserve the distinction in the final report: Gemini analysis succeeded, automated extraction failed or was incomplete, and the final evidence set came from manual extraction plus visual QA. Reusable commands and the manifest schema are documented below because this installed skill currently does not accept creating a new support file under its external skill directory.
+
+**Minimal manifest shape:**
+```json
+{
+  "source_video": "/absolute/run/video_source.mp4",
+  "entries": [{"path":"images/frame_01_01_40.jpg","timestamp":"01:40","timestamp_seconds":100,"type":"screenshot","importance":"high","description":"...","article_context":"..."}],
+  "qa": {"manual_fallback":true,"removed":["images/frame_rejected.jpg"],"accepted_frames":["images/frame_01_01_40.jpg"]}
+}
+```
+
+**Reporting contract:** say explicitly that Gemini analysis succeeded but bundled extraction stopped during alignment, and that final evidence came from manual extraction plus contact-sheet visual QA. Do not call the run fully automated or claim a frame is visually verified when it was only inferred from subtitles.
+
+## Frame.io 多影片 Browser Bridge 盤點與下載
+
+使用本 skill 的 Frame.io 系列流程時，先讀 `references/frameio-opencli-browser-bridge.md`。它記錄 opencli canonical binary preflight、遞迴讀取 `data-testid=asset-panel-grid-asset-card`、排除非影片資產、避免重用 stale refs，以及從單支 asset page 觸發 `Download Asset` 的可驗證流程。不要猜測簽名 URL，也不要把根頁 folder count 當成完整影片數。
+
+## Frame.io multi-video share series gate (2026-08-13)
+
+When a user provides a Frame.io share link containing multiple videos and asks for sequential deep reading, route it through the series workflow before starting any video. Resolve the short link to the canonical share URL, record the share/folder identifiers, and create a durable `series_manifest.json` plus `plan.md` under the profile-owned output directory. The manifest is the source of truth for index, asset ID, title, verified source/download URL, duration, transcript/article/evidence paths, Notion page ID/URL, and local video deletion state.
+
+Do not download, analyze, or publish a video until the complete asset list has been enumerated and ordered. If the share page exposes only summary metadata, leave the manifest with an explicit discovery-pending/blocked state and record the exact limitation; never infer video count, titles, durations, or download URLs from folder count, HTML bundles, or guessed API paths. A permission-denied response from an asset-list endpoint is evidence that the current discovery route is blocked, not proof that the Frame.io source is unavailable forever. Preserve the source identifiers and continue only after an authenticated/browser-visible route or user-provided export/download access is available.
+
+For each manifest item, process strictly in order: download to a temporary per-video workspace, acquire captions or clearly label ASR, run visual analysis and evidence-frame QA, write and fidelity-check the article, pass Final Gate and image QA, preview before Notion publication, perform Notion full readback, then delete only the local video copy. Preserve subtitles, accepted screenshots/GIFs, article, manifests, and QA reports. Never delete a video before publication/readback and artifact existence are verified; never delete the remote Frame.io asset. If one item is blocked, apply a bounded recovery policy instead of pausing the whole series: (a) retry the original download once; (b) if it fails or the `.crdownload` size/mtime is unchanged across two checks, use the explicitly labelled Frame.io proxy (prefer MP4 H264 1280×720); (c) if the proxy also fails, record the exact failure in `series_manifest.json` and continue to the next item. Never treat a `.crdownload` as a completed video. See `references/frameio-series-discovery-and-cleanup.md` for the manifest schema and gate checklist.
+
+### Series checkpoint and iteration-cap gate (2026-08-13)
+
+Long Frame.io series are vulnerable to the chat/tool iteration cap. Treat every video as a durable checkpoint, not as a single uninterrupted conversation:
+
+1. After each asset, immediately write its manifest status and absolute paths for download, transcript, evidence, article, Drive backup, Notion page, readback, and deletion state. Do not leave a completed artifact represented only in chat text.
+2. A `delegate_task` completion message means only that the child reported completion. Verify the target article/report exists, is non-empty, and has the expected frontmatter before running publish. If a child says it wrote a file but the path is absent, mark the item pending and continue only after the artifact is actually present.
+3. Background process started/exited messages are not publication or upload proof. Read the returned JSON or query the destination, then record the real page/file ID and verification result in the manifest.
+4. When the iteration cap is near, stop discovery and non-blocking diagnostics. Finish the smallest verifiable closeout for the current item, update the manifest, and report exactly where the series stopped. Never claim the remaining items are complete, and never delete local videos merely because remote backup was started.
+5. Use a fresh tool/readback pass after any subagent edits before patching. A sibling may have changed the article between your last read and your write; re-read the relevant frontmatter and affected section to avoid deleting keys or corrupting YAML (especially `source_url`).
+6. Contact-sheet helpers may silently accept only four inputs. If sampling more than four frames, create multiple sheets or an explicit grid and verify that every image referenced by the article appears in the final QA sheet. Do not treat a warning plus a saved file as full-series visual coverage.
+7. Treat publication as an idempotent, serialized operation. Do not launch duplicate background publish jobs for the same article while an earlier job is unresolved. Before publishing, search the destination by exact title/source URL and inspect the canonical manifest; if a background job later returns a different page ID, do not adopt it automatically. Keep one canonical page ID per manifest item, archive or explicitly mark duplicates, and perform all corrections with `update` on the canonical page.
+8. A successful publish JSON is only a creation signal. Immediately run full remote readback and terminology scan, then write the verified page ID/URL, block count, image count, and bad-term result to `series_manifest.json`. If readback finds platform-side normalization drift, patch the local article with natural wording and update the same page before marking the item complete.
+
+This gate is a resumability requirement: the next session should be able to continue from `series_manifest.json` without relying on the previous transcript. See `references/frameio-series-discovery-and-cleanup.md` for the manifest schema and gate checklist.
+
+## Session-derived visual extraction and preview lessons (2026-08-09)
+
+- **Analyzer source-path handoff:** `analysis.json.metadata.source` may point to a temporary downloader path that has already disappeared, while `metadata.local_video_path` / the run directory still contains `video_source.mp4`. Before declaring extraction blocked, resolve the source to the existing absolute `video_source.mp4` and rerun asset extraction; do not redownload the YouTube video unnecessarily.
+- **Manual extraction fallback:** If `extract_assets.sh` exits during frame alignment before writing `manifest.json`, preserve the Gemini timestamps, use `ffmpeg` against the existing full-resolution source to extract accepted frames/GIFs, and write a compatible `manifest.json` with explicit absolute source paths. This is a degraded extraction path and must be disclosed in the work log.
+- **Accepted-only media contract:** After visual QA, the manifest is the whitelist. Do not insert rejected frames, candidate-offset frames, or GIF endpoint QA stills into the article merely because they exist on disk.
+- **Final preview sheet:** When an article contains more than four media assets, create a custom contact sheet that includes exactly the media actually embedded in the article plus the first frame of each retained GIF. Verify the sheet has no blank placeholder cells before delivery.
+
 ## Session-derived transcript-led publish lessons
 
 - When Gemini visual analysis is blocked but captions are usable, continue as transcript-led / no-screenshot. Before publication, remove internal evidence markers such as `(transcript L...)` from the public article; keep line references only in `fidelity_check.md`.
 - If the user later requests article illustrations, hand off to `creative/baoyu-article-illustrator` for H2 concept planning and `hamster-image-generation` for generation and QA. Concept figures are explanatory visuals, not video evidence.
 - After inserting concept figures, run Final Gate again, then use `notion-upload-workflow`; do not publish the pre-illustration source.
+- For interview-only transcript-led runs where the user explicitly skips Gemini, use `references/transcript-led-interview-concept-figure-session.md`: reject rolling-caption subtitles before analysis, integrate authoritative sources into the body, keep concept figures separate from video evidence, require Codex native-only provenance plus contact-sheet/full-resolution QA, then rerun fidelity and Final Gate after image insertion.
+
+### Flattened or noisy transcript handling for Frame.io proxy runs
+
+When a Frame.io export provides a single-line transcript with mixed-language corruption, do not treat the file's existence as proof that every sentence is reliable. Read the complete text in bounded chunks (split on sentence boundaries or fixed character windows), then build the article from stable, repeated claims only.
+
+**Single-line citation exception:** If the canonical transcript has only one physical line, do not fabricate line ranges. Create a deterministic sentence/character-offset index, cite `transcript:L1` plus character ranges such as `chars 7772–7787`, and record that the source is single-line. If a downstream fidelity template requires line references, use the real `L1` and add character offsets as the precise locator. Preserve the original transcript unchanged; any sentence-split or chunked working copy is an analysis aid, not a replacement source of truth.
+
+For each case, separate three evidence tiers in the draft or fidelity report:
+
+1. **字幕內容** — claims that remain legible after chunked reading;
+2. **親眼驗證畫面** — only visual facts directly checked by the main agent from the accepted contact sheet or frames;
+3. **順序推導分析** — editorial interpretation derived from the order and relationship of the verified claims.
+
+If a noisy segment contains prices, customer identities, whiteboard microtext, or outcome metrics that cannot be read with confidence, omit them rather than repairing the transcript from context. It is acceptable to describe the workflow purpose at a functional level, but do not turn a speaker's case into a general revenue claim, benchmark, or guaranteed result. State the proxy resolution and the visual verification boundary explicitly in the article and fidelity report.
 
 ## Long-video degraded visual + ASR recovery pattern
 
@@ -456,8 +554,11 @@ The fallback is still a valid evidence-bearing v2a run when the final manifest a
 - `references/transcript-led-code-with-claude-series-example.md` — Concrete session note for a long podcast run: how to mark visual steps blocked, convert Step 07 into editorial review, preserve transparency, and handle Final Gate after normalization fails on zh-en spacing.
 - `references/transcript-led-invalid-visual-qc.md` — Visual extraction/QC fallback when Gemini/extractor produces zero usable assets or mismatched frames: cancel Step 03, continue transcript-led, prohibit visual claims/placeholders, and avoid inventing key frames to satisfy extractor scripts.
 - `references/transcript-led-draft-plus-figure-brief.md` — 輕量模式：已有 transcript、使用者只要繁中深度解讀初稿與配圖方案時，產出 article / figure brief / fidelity 三檔，並明確標示未跑視覺分析與未插入真實截圖。
+- `references/transcript-led-interview-concept-figure-session.md` — 訪談免 Gemini 的完整實戰分支：canonical 字幕品質門、claim ledger、外部一手資料、Codex native-only 概念圖、provenance/contact sheet/逐張 QA、fidelity 與 Final Gate。
 - `references/transcript-led-speech-and-subtitle-validation.md` — 演講／keynote 明確免視覺分析時的 transcript-led 分流，以及字幕覆蓋率、人工／自動字幕來源與 rolling-caption 重複驗證。
-- `references/conference-series-batch-deep-reading.md` — 大會 / 活動系列影片批次深度解讀：manifest-first、sub-agent 分批寫作、主 agent text QC + image QA 雙 gate、未通過圖片 QA 時禁止發布。
+- `references/frameio-download-stall-recovery.md` — Frame.io folder-tree routing, deep-URL unauthenticated shell diagnosis, `.crdownload` stagnation test, one-retry → 1280×720 proxy → skip policy, and Drive/Notion cleanup gates.
+- `references/frameio-series-discovery-and-cleanup.md` — 大會 / 活動系列影片批次深度解讀：manifest-first、sub-agent 分批寫作、主 agent text QC + image QA 雙 gate、未通過圖片 QA 時禁止發布。
+- `references/frameio-series-iteration-cap-and-artifact-verification-2026-08-13.md` — Frame.io 長系列遇到工具回合上限時的 checkpoint、子代理產物驗證、背景程序真實結果讀回、同頁 Notion OpenCC 修復與 contact sheet 四圖上限。
 - `references/conference-batch-existing-article-review.md` — 已完成大會系列文章的 transcript 對照 review 模式：不重寫不發布，輸出逐篇 deep-reading / terminology review artifact 與 batch summary。
 - `references/conference-batch-text-artifact-gates.md` — 大會批次的 transcript-led 文字包檢查：article / figure brief / fidelity 三件套、概念圖 brief 規格、證據表與 batch validator gates。
 - `references/code-with-claude-transcript-led-batch-notes.md` — Code with Claude 系列 transcript-led 批次補充：ASR 將 Claude 誤轉 Cloud 的透明處理、三件套 gate、frontmatter divider validator 坑與最小 patch loop。
